@@ -67,18 +67,12 @@ export const ActivityLogs: React.FC<ActivityLogsProps> = ({ logs, onDelete }) =>
                 </div>
               ))}
               
-              {/* Placeholder for more logs */}
-              {[...Array(5)].map((_, i) => (
-                <div key={i} className="relative flex gap-6 opacity-30 grayscale">
-                  <div className="z-10 w-8 h-8 rounded-full bg-white/10 border-2 border-background flex items-center justify-center">
-                    <Info className="w-4 h-4" />
-                  </div>
-                  <div className="flex-1 space-y-1 pb-8 border-b border-white/5">
-                    <div className="h-4 w-48 bg-white/10 rounded animate-pulse" />
-                    <div className="h-3 w-full bg-white/5 rounded animate-pulse" />
-                  </div>
+              {logs.length === 0 && (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Settings className="w-8 h-8 mx-auto mb-3 opacity-30" />
+                  <p className="text-sm font-mono">Waiting for system telemetry...</p>
                 </div>
-              ))}
+              )}
             </div>
           </ScrollArea>
         </CardContent>

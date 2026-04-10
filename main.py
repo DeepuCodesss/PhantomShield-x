@@ -7,7 +7,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import time
 import asyncio
 import psutil
@@ -34,6 +34,118 @@ app.add_middleware(
 # Global in-memory storage
 incidents = []
 scan_history = []
+
+# ─── Agent Registry ──────────────────────────────────────────────────────────
+# Key: device_id → { info, last_heartbeat, telemetry, apps }
+agents: Dict[str, Dict[str, Any]] = {}
+
+class AgentRegisterPayload(BaseModel):
+    device_id: str
+    hostname: str
+    ip: str
+    os: str
+    os_version: Optional[str] = ""
+    username: Optional[str] = ""
+    architecture: Optional[str] = ""
+    python_version: Optional[str] = ""
+    registered_at: Optional[str] = ""
+
+class AgentHeartbeatPayload(BaseModel):
+    device_id: str
+    timestamp: float
+    datetime: Optional[str] = ""
+    cpu: Optional[dict] = {}
+    memory: Optional[dict] = {}
+    disk: Optional[dict] = {}
+    network: Optional[dict] = {}
+    boot_time: Optional[float] = 0
+    active_connections: Optional[list] = []
+    processes: Optional[list] = []
+    process_count: Optional[int] = 0
+
+class AgentAppsPayload(BaseModel):
+    device_id: str
+    apps: List[dict]
+
+@app.post("/agent/register")
+async def agent_register(payload: AgentRegisterPayload):
+    """Called by agent.py when a new device comes online."""
+    device_id = payload.device_id
+    agents[device_id] = {
+        "info": payload.dict(),
+        "last_heartbeat": time.time(),
+        "telemetry": {},
+        "apps": [],
+        "status": "online",
+    }
+    print(f"[AGENT] New device registered: {payload.hostname} ({payload.ip})")
+    return {"status": "registered", "device_id": device_id}
+
+@app.post("/agent/heartbeat")
+async def agent_heartbeat(payload: AgentHeartbeatPayload):
+    """Receives live telemetry from an agent device every 5 seconds."""
+    device_id = payload.device_id
+    if device_id not in agents:
+        # Auto-register with minimal info if not seen before
+        agents[device_id] = {
+            "info": {"device_id": device_id, "hostname": "Unknown", "ip": "unknown", "os": "unknown"},
+            "apps": [],
+        }
+    agents[device_id]["last_heartbeat"] = time.time()
+    agents[device_id]["telemetry"] = payload.dict()
+    agents[device_id]["status"] = "online"
+    return {"status": "ok"}
+
+@app.post("/agent/apps")
+async def agent_apps(payload: AgentAppsPayload):
+    """Receives the installed apps list from an agent device."""
+    device_id = payload.device_id
+    if device_id in agents:
+        agents[device_id]["apps"] = payload.apps
+    return {"status": "ok", "count": len(payload.apps)}
+
+@app.get("/admin/devices")
+async def admin_get_devices():
+    """Returns all registered devices with their status and latest telemetry."""
+    now = time.time()
+    result = []
+    for device_id, agent in agents.items():
+        last_hb = agent.get("last_heartbeat", 0)
+        # Mark offline if no heartbeat in last 30 seconds
+        is_online = (now - last_hb) < 30
+        agent["status"] = "online" if is_online else "offline"
+        result.append({
+            "device_id": device_id,
+            "info": agent.get("info", {}),
+            "status": "online" if is_online else "offline",
+            "last_seen": last_hb,
+            "last_seen_ago": round(now - last_hb),
+            "telemetry": agent.get("telemetry", {}),
+            "apps_count": len(agent.get("apps", [])),
+        })
+    # Sort: online first, then by last seen
+    result.sort(key=lambda x: (x["status"] != "online", -x["last_seen"]))
+    return {"devices": result, "total": len(result), "online": sum(1 for d in result if d["status"] == "online")}
+
+@app.get("/admin/device/{device_id}")
+async def admin_get_device(device_id: str):
+    """Returns full details of a specific device including apps and telemetry."""
+    if device_id not in agents:
+        raise HTTPException(status_code=404, detail="Device not found")
+    agent = agents[device_id]
+    now = time.time()
+    last_hb = agent.get("last_heartbeat", 0)
+    return {
+        "device_id": device_id,
+        "info": agent.get("info", {}),
+        "status": "online" if (now - last_hb) < 30 else "offline",
+        "last_seen_ago": round(now - last_hb),
+        "telemetry": agent.get("telemetry", {}),
+        "apps": agent.get("apps", []),
+        "apps_count": len(agent.get("apps", [])),
+    }
+
+
 
 # Pydantic models for incoming requests
 class LogPayload(BaseModel):
@@ -247,6 +359,127 @@ async def simulate_traffic():
         result = await _process_log_pipeline(log)
         results.append(result)
     return results
+
+@app.get("/system/stats")
+async def system_stats():
+    """Returns real-time system telemetry from the host machine."""
+    cpu = psutil.cpu_percent(interval=None)
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+    net = psutil.net_io_counters()
+    boot = psutil.boot_time()
+    
+    # Network speed approximation
+    net_sent = net.bytes_sent
+    net_recv = net.bytes_recv
+    
+    return {
+        "cpu_percent": cpu,
+        "cpu_count": psutil.cpu_count(),
+        "memory": {
+            "total_gb": round(mem.total / (1024**3), 2),
+            "used_gb": round(mem.used / (1024**3), 2),
+            "percent": mem.percent,
+        },
+        "disk": {
+            "total_gb": round(disk.total / (1024**3), 2),
+            "used_gb": round(disk.used / (1024**3), 2),
+            "percent": disk.percent,
+        },
+        "network": {
+            "bytes_sent": net_sent,
+            "bytes_recv": net_recv,
+            "packets_sent": net.packets_sent,
+            "packets_recv": net.packets_recv,
+        },
+        "boot_time": boot,
+        "active_connections": len(psutil.net_connections(kind='inet')),
+        "process_count": len(psutil.pids()),
+        "timestamp": time.time(),
+    }
+
+
+@app.get("/system/apps")
+async def installed_apps():
+    """
+    Detects installed applications on Windows via the registry.
+    Flags apps that appear to be on older versions.
+    """
+    apps = []
+    
+    if os.name == 'nt':
+        import winreg
+        registry_paths = [
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ]
+        
+        for reg_path in registry_paths:
+            try:
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path)
+                for i in range(winreg.QueryInfoKey(key)[0]):
+                    try:
+                        subkey_name = winreg.EnumKey(key, i)
+                        subkey = winreg.OpenKey(key, subkey_name)
+                        
+                        try:
+                            name = winreg.QueryValueEx(subkey, "DisplayName")[0]
+                        except FileNotFoundError:
+                            continue
+                            
+                        version = ""
+                        publisher = ""
+                        try:
+                            version = winreg.QueryValueEx(subkey, "DisplayVersion")[0]
+                        except FileNotFoundError:
+                            pass
+                        try:
+                            publisher = winreg.QueryValueEx(subkey, "Publisher")[0]
+                        except FileNotFoundError:
+                            pass
+                            
+                        if name and name.strip():
+                            apps.append({
+                                "name": name.strip(),
+                                "version": version,
+                                "publisher": publisher,
+                            })
+                    except Exception:
+                        continue
+                winreg.CloseKey(key)
+            except Exception:
+                continue
+    
+    # Deduplicate by name
+    seen = set()
+    unique_apps = []
+    for app in apps:
+        if app["name"] not in seen:
+            seen.add(app["name"])
+            unique_apps.append(app)
+    
+    # Sort alphabetically
+    unique_apps.sort(key=lambda x: x["name"].lower())
+    
+    # Heuristic: flag apps with very old looking versions
+    for app in unique_apps:
+        v = app.get("version", "")
+        app["needs_update"] = False
+        app["risk"] = "safe"
+        
+        if v:
+            parts = v.split(".")
+            try:
+                major = int(parts[0])
+                # Flag if major version is very low (heuristic)
+                if major <= 2 and len(parts) > 1:
+                    app["needs_update"] = True
+                    app["risk"] = "warning"
+            except (ValueError, IndexError):
+                pass
+    
+    return {"apps": unique_apps, "total": len(unique_apps)}
+
 
 @app.get("/scan/system/{scan_type}")
 async def system_scan_endpoint(scan_type: str):

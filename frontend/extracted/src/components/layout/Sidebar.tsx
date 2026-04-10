@@ -9,7 +9,8 @@ import {
   User,
   LogOut,
   ChevronRight,
-  Trash2
+  Trash2,
+  Monitor
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -17,17 +18,18 @@ interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   onLogout: () => void;
+  isAdmin?: boolean;
 }
 
-const navItems = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'threats', label: 'Threat Analysis', icon: AlertTriangle },
-  { id: 'logs', label: 'Activity Logs', icon: History },
-  { id: 'ai', label: 'AI Insights', icon: BrainCircuit },
-  { id: 'recycle', label: 'Recycle Bin', icon: Trash2 },
-];
-
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, onLogout }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, onLogout, isAdmin }) => {
+  const navItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'threats', label: 'Threat Analysis', icon: AlertTriangle },
+    { id: 'logs', label: 'Activity Logs', icon: History },
+    { id: 'ai', label: 'AI Insights', icon: BrainCircuit },
+    { id: 'recycle', label: 'Recycle Bin', icon: Trash2 },
+    ...(isAdmin ? [{ id: 'admin', label: 'Admin Panel', icon: Monitor }] : []),
+  ];
   return (
     <aside className="w-64 h-screen glass border-r border-white/5 flex flex-col z-50">
       <div className="p-6 flex items-center gap-3">

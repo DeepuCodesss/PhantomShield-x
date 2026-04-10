@@ -7,19 +7,26 @@ import { ActivityLogs } from './components/dashboard/ActivityLogs';
 import { ChatBot } from './components/dashboard/ChatBot';
 import { Settings } from './components/dashboard/Settings';
 import { RecycleBin } from './components/dashboard/RecycleBin';
+import { AdminPanel } from './components/dashboard/AdminPanel';
 import { Hero } from './components/landing/Hero';
+import { Login } from './components/landing/Login';
+import { SignUp } from './components/landing/SignUp';
 import { motion, AnimatePresence } from 'motion/react';
 import { Threat, ActivityLog, RecycleBinItem } from './types';
 import { mockThreats as initialThreats, mockLogs as initialLogs } from './mockData';
 
 export default function App() {
-  const [isLanding, setIsLanding] = useState(true);
+  const [view, setView] = useState<'hero' | 'login' | 'signup' | 'dashboard'>('hero');
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [loggedInEmail, setLoggedInEmail] = useState('');
+  const [registeredUsers, setRegisteredUsers] = useState<{email: string; password: string}[]>([
+    { email: 'mayankraj@gmail.com', password: '1234' }
+  ]);
   
   // Global State
-  const [threats, setThreats] = useState<Threat[]>(initialThreats as Threat[]);
-  const [logs, setLogs] = useState<ActivityLog[]>(initialLogs as ActivityLog[]);
+  const [threats, setThreats] = useState<Threat[]>([]);
+  const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [recycleBin, setRecycleBin] = useState<RecycleBinItem[]>([]);
   
   useEffect(() => {
@@ -33,12 +40,10 @@ export default function App() {
         if (data && data.length > 0) {
           const liveThreats = data.map((inc: any, i: number) => {
             const isSystemMetric = inc.log.action === 'system_metric';
-            const isAnomalous = isSystemMetric && (inc.severity === 'HIGH' || inc.severity === 'CRITICAL');
             
             let finalSeverity = inc.severity.toLowerCase();
             if (isSystemMetric) {
-               // Hard override: Background PC telemetry defaults directly to SAFE (Green)
-               // Only trigger an actual system metric anomaly if the AI is 95+ severity indicating terminal malfunction.
+               // Only flag system metrics as threats if risk score is extreme
                if (inc.risk_score >= 95) {
                    finalSeverity = 'critical';
                } else {
@@ -46,14 +51,17 @@ export default function App() {
                }
             }
 
+            // Real status: only high/critical severity = active threat. Everything else = resolved/safe.
+            const isRealThreat = (finalSeverity === 'critical' || finalSeverity === 'high');
+
             return {
               id: `live-${inc.timestamp}-${i}`,
               type: isSystemMetric 
-                ? (isAnomalous ? 'System Anomaly Detected' : 'System Status Safe') 
-                : (inc.severity === 'LOW' ? 'Network Activity' : 'Network Incident'),
+                ? (isRealThreat ? 'System Anomaly Detected' : 'System Status Safe') 
+                : (isRealThreat ? 'Network Incident' : 'Network Activity'),
               severity: finalSeverity,
               source: inc.log.source_ip || 'unknown',
-              status: 'active',
+              status: isRealThreat ? 'active' : 'resolved',
               timestamp: inc.log.datetime || new Date().toISOString(),
               description: isSystemMetric 
                 ? `Host Metrics - CPU: ${inc.log.cpu_usage}%, RAM: ${inc.log.memory_usage}%. Protocol: ${inc.log.protocol} on Port: ${inc.log.port}`
@@ -62,6 +70,41 @@ export default function App() {
           });
           
           setThreats(liveThreats);
+          
+          // Build real activity logs from incidents
+          const liveLogs: ActivityLog[] = data.map((inc: any, i: number) => {
+            const isSystemMetric = inc.log.action === 'system_metric';
+            const sev = inc.severity?.toUpperCase() || 'LOW';
+            
+            let logType: 'system' | 'security' | 'user' = 'system';
+            let event = 'System Telemetry';
+            let details = '';
+            
+            if (isSystemMetric) {
+              logType = 'system';
+              event = `System Monitor — CPU ${inc.log.cpu_usage}%, RAM ${inc.log.memory_usage}%`;
+              details = `Protocol: ${inc.log.protocol} | Port: ${inc.log.port} | Target: ${inc.log.source_ip}`;
+            } else if (sev === 'CRITICAL' || sev === 'HIGH') {
+              logType = 'security';
+              event = `Security Alert: ${inc.action || 'Anomaly Detected'}`;
+              details = inc.message || `Risk Score: ${inc.risk_score} | Source: ${inc.log.source_ip}`;
+            } else {
+              logType = 'user';
+              event = `Network Activity — ${inc.log.protocol || 'TCP'}`;
+              details = inc.message || `${inc.log.source_ip} → ${inc.log.dest_ip}:${inc.log.port}`;
+            }
+            
+            return {
+              id: `log-${inc.timestamp}-${i}`,
+              event,
+              timestamp: inc.log.datetime || new Date().toISOString(),
+              details,
+              type: logType,
+              user: isSystemMetric ? 'HOST-SYSTEM' : (inc.log.user_id || undefined),
+            };
+          });
+          
+          setLogs(liveLogs);
         }
       } catch (err) {
         console.error("Live monitoring offline", err);
@@ -80,7 +123,7 @@ export default function App() {
 
   // Handlers
   const handleLogout = () => {
-    setIsLanding(true);
+    setView('hero');
     setActiveTab('dashboard');
   };
 
@@ -142,7 +185,8 @@ export default function App() {
             threats={threats} 
             logs={logs} 
             onReset={clearAllData} 
-            onOpenNotifications={() => setIsNotificationsOpen(true)} 
+            onOpenNotifications={() => setIsNotificationsOpen(true)}
+            loggedInEmail={loggedInEmail}
           />
         );
       case 'threats':
@@ -162,23 +206,60 @@ export default function App() {
             onEmpty={emptyBin} 
           />
         );
+      case 'admin':
+        return <AdminPanel />;
       default:
-        return <Overview threats={threats} logs={logs} />;
+        return <Overview threats={threats} logs={logs} onReset={clearAllData} onOpenNotifications={() => setIsNotificationsOpen(true)} loggedInEmail={loggedInEmail} />;
     }
   };
 
   return (
     <div className="min-h-screen bg-background text-foreground selection:bg-primary/30">
       <AnimatePresence mode="wait">
-        {isLanding ? (
+        {view === 'hero' ? (
           <motion.div
             key="landing"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.5 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
           >
-            <Hero onEnter={() => setIsLanding(false)} />
+            <Hero onEnter={() => setView('login')} />
+          </motion.div>
+        ) : view === 'login' ? (
+          <motion.div
+            key="login"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <Login onLogin={(email: string) => {
+              setLoggedInEmail(email);
+              // Add real login log entry
+              setLogs(prev => [{
+                id: `login-${Date.now()}`,
+                event: `User Login — ${email}`,
+                timestamp: new Date().toISOString(),
+                details: `Successful authentication from ${email}. Session initiated.`,
+                type: 'user' as const,
+                user: email,
+              }, ...prev]);
+              setView('dashboard');
+            }} onSignUp={() => setView('signup')} registeredUsers={registeredUsers} />
+          </motion.div>
+        ) : view === 'signup' ? (
+          <motion.div
+            key="signup"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <SignUp onSignIn={() => setView('login')} onSignUpComplete={(user) => {
+               setRegisteredUsers(prev => [...prev, user]);
+               setView('login');
+            }} />
           </motion.div>
         ) : (
           <motion.div
@@ -188,7 +269,7 @@ export default function App() {
             transition={{ duration: 0.5 }}
             className="flex h-screen overflow-hidden"
           >
-            <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} onLogout={handleLogout} />
+            <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} onLogout={handleLogout} isAdmin={loggedInEmail === 'mayankraj@gmail.com'} />
             
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
               <Topbar 
@@ -220,7 +301,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Global Decorative Elements */}
-      {!isLanding && (
+      {view === 'dashboard' && (
         <div className="fixed bottom-0 right-0 p-4 pointer-events-none opacity-20">
           <p className="text-[10px] font-mono uppercase tracking-[0.2em]">
             System Status: Nominal // Encryption: Active // AI Core: Online
