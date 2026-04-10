@@ -19,7 +19,19 @@ import json
 import time
 import argparse
 import subprocess
+import threading
+import tkinter as tk
+import webbrowser
 from datetime import datetime
+
+try:
+    import pystray
+    from PIL import Image, ImageDraw
+except ImportError:
+    print("[!] pystray/Pillow not found. Installing...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "pystray", "pillow"])
+    import pystray
+    from PIL import Image, ImageDraw
 
 try:
     import httpx
@@ -299,46 +311,119 @@ async def active_protection_monitor(client: httpx.AsyncClient, server: str, devi
     """Background scanner that actively deletes malware immediately upon creation."""
     print("[+] Active Protection Module Online. Watching file system...")
     
-    desktop_dir = os.path.join(os.path.expanduser("~"), "Desktop")
-    if not os.path.exists(desktop_dir): return
-
+    desktop_dirs = [
+        os.path.join(os.path.expanduser("~"), "Desktop"),
+        os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop")
+    ]
+    
     malicious_keywords = ["virus", "malware", "ransomware", "trojan", "mimikatz"]
     
-    seen_files = set(os.listdir(desktop_dir))
+    seen_files = {} # dict mapping dir to set of files
+    for d in desktop_dirs:
+        if os.path.exists(d):
+            try:
+                seen_files[d] = set(os.listdir(d))
+            except Exception:
+                seen_files[d] = set()
     
     while True:
         try:
-            current_files = set(os.listdir(desktop_dir))
-            new_files = current_files - seen_files
-            
-            for file in new_files:
-                file_lower = file.lower()
-                if any(word in file_lower for word in malicious_keywords):
-                    filepath = os.path.join(desktop_dir, file)
-                    try:
-                        os.remove(filepath) # INSTANTLY DELETE
-                        print(f"  [!!!] ACTIVE PROTECTION: DELETED {file}")
-                        
-                        # Report to dashboard
-                        threats = [{
-                            "name": file,
-                            "file_path": filepath,
-                            "severity": "critical",
-                            "status": "deleted",
-                            "description": "Malware automatically neutralized by Active Protection Engine."
-                        }]
-                        await client.post(
-                            f"{server}/agent/threats",
-                            json={"device_id": device_id, "threats": threats},
-                            timeout=5
-                        )
-                    except Exception as e:
-                        print(f"  [!] Failed to delete {file}: {e}")
-                        
-            seen_files = current_files
+            for d in list(seen_files.keys()):
+                if not os.path.exists(d): continue
+                current_files = set()
+                try:
+                    current_files = set(os.listdir(d))
+                except Exception:
+                    continue
+                    
+                new_files = current_files - seen_files[d]
+                
+                for file in new_files:
+                    file_lower = file.lower()
+                    if any(word in file_lower for word in malicious_keywords):
+                        filepath = os.path.join(d, file)
+                        try:
+                            # INSTANTLY DELETE
+                            if os.path.isfile(filepath):
+                                os.remove(filepath) 
+                                print(f"  [!!!] ACTIVE PROTECTION: DELETED {file} from {d}")
+                                # Report to dashboard
+                                threats = [{
+                                    "name": file,
+                                    "file_path": filepath,
+                                    "severity": "critical",
+                                    "status": "deleted",
+                                    "description": "Malware automatically neutralized by Active Protection Engine."
+                                }]
+                                await client.post(
+                                    f"{server}/agent/threats",
+                                    json={"device_id": device_id, "threats": threats},
+                                    timeout=5
+                                )
+                                current_files.remove(file)
+                        except Exception as e:
+                            print(f"  [!] Failed to delete {file}: {e}")
+                seen_files[d] = current_files
         except Exception:
             pass
         await asyncio.sleep(2) # Near real-time monitoring
+
+async def usb_monitor(client: httpx.AsyncClient, server: str, device_id: str):
+    """Watches for new USB drives and automatically scans them."""
+    print("[+] USB Monitor Online. Watching for removable drives...")
+    known_drives = set()
+    
+    # Init known drives
+    try:
+        for ptr in psutil.disk_partitions():
+            known_drives.add(ptr.device)
+    except Exception:
+        pass
+        
+    malicious_keywords = ["virus", "malware", "ransomware", "trojan", "mimikatz"]
+
+    while True:
+        try:
+            current_drives = set()
+            for ptr in psutil.disk_partitions():
+                current_drives.add(ptr.device)
+                
+            new_drives = current_drives - known_drives
+            for drive in new_drives:
+                print(f"[!] New Drive Detected: {drive}")
+                # Instantly scan the drive
+                threats = []
+                for root, _, files in os.walk(drive):
+                    for file in files:
+                        if any(kw in file.lower() for kw in malicious_keywords):
+                            filepath = os.path.join(root, file)
+                            try:
+                                if os.path.isfile(filepath):
+                                    os.remove(filepath)
+                                    threats.append({
+                                        "name": file,
+                                        "file_path": filepath,
+                                        "severity": "critical",
+                                        "status": "deleted",
+                                        "description": f"USB malware neutralized upon insertion onto {drive}"
+                                    })
+                                    print(f"  [X] USB THREAT DELETED: {file}")
+                            except Exception:
+                                pass
+                if threats:
+                    try:
+                        await client.post(
+                            f"{server}/agent/threats",
+                            json={"device_id": device_id, "threats": threats},
+                            timeout=10
+                        )
+                    except Exception:
+                        pass
+                        
+            known_drives = current_drives
+        except Exception:
+            pass
+        await asyncio.sleep(5)
 
 async def main(server: str):
     device_id = get_or_create_device_id()
@@ -360,6 +445,9 @@ async def main(server: str):
         
         # Start Active Protection Real-time Watcher
         asyncio.create_task(active_protection_monitor(client, server, device_id))
+        
+        # Start USB Monitor
+        asyncio.create_task(usb_monitor(client, server, device_id))
 
         # Heartbeat loop
         print(f"[~] Sending telemetry every {HEARTBEAT_INTERVAL}s. Press Ctrl+C to stop.\n")
@@ -367,6 +455,109 @@ async def main(server: str):
             await send_heartbeat(client, server, device_id)
             await asyncio.sleep(HEARTBEAT_INTERVAL)
 
+
+def create_image():
+    """Generates a simple tray icon (shield)."""
+    width = 64
+    height = 64
+    color = (20, 20, 20)
+    image = Image.new('RGB', (width, height), color)
+    draw = ImageDraw.Draw(image)
+    # Draw simple shield outline
+    draw.polygon([(32, 5), (55, 15), (55, 45), (32, 60), (9, 45), (9, 15)], fill=(77, 138, 240))
+    return image
+
+def set_autorun():
+    """Adds the agent to Windows registry so it auto-starts on login."""
+    if platform.system() == "Windows":
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+            # Find exact path if running as pyinstaller executable, else python path
+            if getattr(sys, 'frozen', False):
+                exe_path = sys.executable
+            else:
+                exe_path = f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+            winreg.SetValueEx(key, "PhantomShieldAgent", 0, winreg.REG_SZ, exe_path)
+            winreg.CloseKey(key)
+        except Exception as e:
+            print(f"[!] Failed to set autorun: {e}")
+
+def run_background_loop(server):
+    try:
+        asyncio.run(main(server))
+    except Exception as e:
+        print(f"Background network loop crashed: {e}")
+
+def open_ui():
+    """Builds a local Tkinter UI for the background agent."""
+    device_id = get_or_create_device_id()
+    root = tk.Tk()
+    root.title("PhantomShield X Agent")
+    root.geometry("400x500")
+    root.configure(bg="#0a0a0b")
+    root.resizable(False, False)
+    
+    # Try putting the window above others
+    try:
+        root.attributes('-topmost', 1)
+        root.after(1000, lambda: root.attributes('-topmost', 0))
+    except: pass
+    
+    label = tk.Label(root, text="🛡 PhantomShield X", font=("Segoe UI", 20, "bold"), fg="#4D8AF0", bg="#0a0a0b")
+    label.pack(pady=30)
+    
+    status_frame = tk.Frame(root, bg="#111", bd=1, relief="solid")
+    status_frame.pack(fill="x", padx=20, pady=10)
+    
+    tk.Label(status_frame, text="AGENT STATUS", font=("Segoe UI", 10), fg="#888", bg="#111").pack(pady=5)
+    tk.Label(status_frame, text="✅ PROTECTED", font=("Segoe UI", 16, "bold"), fg="#10b981", bg="#111").pack(pady=5)
+    
+    info_frame = tk.Frame(root, bg="#111", bd=1, relief="solid")
+    info_frame.pack(fill="x", padx=20, pady=10)
+    
+    tk.Label(info_frame, text=f"Device ID: {device_id[:12]}...", font=("Consolas", 10), fg="#ccc", bg="#111").pack(pady=5)
+    tk.Label(info_frame, text=f"Hostname: {socket.gethostname()}", font=("Consolas", 10), fg="#ccc", bg="#111").pack(pady=5)
+    tk.Label(info_frame, text=f"Engine: Active", font=("Consolas", 10), fg="#ccc", bg="#111").pack(pady=5)
+    
+    def open_dash():
+        webbrowser.open("https://phantom-shield-x.vercel.app/admin")
+        
+    btn = tk.Button(root, text="Open Web Dashboard", bg="#4D8AF0", fg="white", font=("Segoe UI", 12, "bold"), 
+                    activebackground="#3b72c9", activeforeground="white", command=open_dash, relief="flat", cursor="hand2")
+    btn.pack(pady=30, ipadx=10, ipady=5)
+    
+    # Prevent multiple windows by running mainloop
+    root.mainloop()
+
+def on_ui_click(icon, item):
+    """Spawns the UI securely without blocking the primary tray icon."""
+    threading.Thread(target=open_ui, daemon=True).start()
+
+def setup_tray(server):
+    """Sets up the invisible system tray icon and branches network loop."""
+    print("[+] Initializing PhantomShield Agent in stealth tray mode...")
+    set_autorun()
+    
+    # Fire up the networking loop in a background thread so the UI loop isn't blocked
+    bg_thread = threading.Thread(target=run_background_loop, args=(server,), daemon=True)
+    bg_thread.start()
+    
+    # Setup icon
+    image = create_image()
+    
+    def on_quit(icon, item):
+        icon.stop()
+        os._exit(0) # hard exit to kill background threads
+        
+    menu = pystray.Menu(
+        pystray.MenuItem('Open PhantomShield Dashboard', on_ui_click, default=True),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem('Exit Endpoint Agent', on_quit)
+    )
+    
+    icon = pystray.Icon("PhantomShield", image, "PhantomShield-X Agent", menu)
+    icon.run()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PhantomShield X Device Agent")
@@ -378,6 +569,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     try:
-        asyncio.run(main(args.server))
+        setup_tray(args.server)
     except KeyboardInterrupt:
         print("\n[+] Agent stopped.")
