@@ -47,7 +47,7 @@ echo ============================================
 echo.
 
 REM ── Run the agent ─────────────────────────────
-REM Change the --server URL to your deployed Railway backend URL
-python agent.py --server https://phantomshield-backend.up.railway.app
+REM Change the --server URL to your deployed backend URL
+python agent.py --server https://phantomshield-x.onrender.com
 
 pause

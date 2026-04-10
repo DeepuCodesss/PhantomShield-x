@@ -37,5 +37,5 @@ echo "  Press Ctrl+C anytime to stop."
 echo "============================================"
 echo ""
 
-# Run the agent — change URL to your Railway backend
-python3 agent.py --server https://phantomshield-backend.up.railway.app
+# Run the agent — change URL to your backend
+python3 agent.py --server https://phantomshield-x.onrender.com
