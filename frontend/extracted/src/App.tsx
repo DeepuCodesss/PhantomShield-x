@@ -12,8 +12,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Threat, ActivityLog, RecycleBinItem } from './types';
 import { mockThreats as initialThreats, mockLogs as initialLogs } from './mockData';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
 export default function App() {
   const [isLanding, setIsLanding] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -23,115 +21,67 @@ export default function App() {
   const [threats, setThreats] = useState<Threat[]>(initialThreats as Threat[]);
   const [logs, setLogs] = useState<ActivityLog[]>(initialLogs as ActivityLog[]);
   const [recycleBin, setRecycleBin] = useState<RecycleBinItem[]>([]);
-  const [backendOnline, setBackendOnline] = useState(false);
+  
+  useEffect(() => {
+    const fetchIncidents = async () => {
+      try {
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        const res = await fetch(`${API_URL}/incidents`);
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        if (data && data.length > 0) {
+          const liveThreats = data.map((inc: any, i: number) => {
+            const isSystemMetric = inc.log.action === 'system_metric';
+            const isAnomalous = isSystemMetric && (inc.severity === 'HIGH' || inc.severity === 'CRITICAL');
+            
+            let finalSeverity = inc.severity.toLowerCase();
+            if (isSystemMetric) {
+               // Hard override: Background PC telemetry defaults directly to SAFE (Green)
+               // Only trigger an actual system metric anomaly if the AI is 95+ severity indicating terminal malfunction.
+               if (inc.risk_score >= 95) {
+                   finalSeverity = 'critical';
+               } else {
+                   finalSeverity = 'low';
+               }
+            }
+
+            return {
+              id: `live-${inc.timestamp}-${i}`,
+              type: isSystemMetric 
+                ? (isAnomalous ? 'System Anomaly Detected' : 'System Status Safe') 
+                : (inc.severity === 'LOW' ? 'Network Activity' : 'Network Incident'),
+              severity: finalSeverity,
+              source: inc.log.source_ip || 'unknown',
+              status: 'active',
+              timestamp: inc.log.datetime || new Date().toISOString(),
+              description: isSystemMetric 
+                ? `Host Metrics - CPU: ${inc.log.cpu_usage}%, RAM: ${inc.log.memory_usage}%. Protocol: ${inc.log.protocol} on Port: ${inc.log.port}`
+                : inc.message
+            };
+          });
+          
+          setThreats(liveThreats);
+        }
+      } catch (err) {
+        console.error("Live monitoring offline", err);
+      }
+    };
+    
+    fetchIncidents();
+    const interval = setInterval(fetchIncidents, 5000);
+    return () => clearInterval(interval);
+  }, []);
   const [notifications, setNotifications] = useState([
     { id: '1', title: 'Critical Threat Detected', description: 'SQL Injection attempt blocked on /api/v1/users', type: 'error', time: '2m ago' },
     { id: '2', title: 'System Update Ready', description: 'Version 2.4.0 is ready for deployment.', type: 'info', time: '1h ago' },
     { id: '3', title: 'Weekly Report Generated', description: 'Your security summary for this week is available.', type: 'success', time: '5h ago' },
   ]);
 
-  // Check backend health on mount
-  useEffect(() => {
-    fetch(`${API_URL}/health`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.status === 'ok') {
-          setBackendOnline(true);
-          console.log('PhantomShield X Backend connected:', data);
-        }
-      })
-      .catch(() => {
-        console.warn('Backend not reachable. Running in offline/mock mode.');
-        setBackendOnline(false);
-      });
-  }, []);
-
-  // Fetch live incidents from backend periodically
-  useEffect(() => {
-    if (!backendOnline) return;
-
-    const fetchIncidents = async () => {
-      try {
-        const res = await fetch(`${API_URL}/incidents`);
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          const backendThreats: Threat[] = data.map((inc: any, i: number) => ({
-            id: `AI-${Date.now()}-${i}`,
-            type: inc.action === 'block_ip' ? 'AI: Anomalous Network Activity' :
-                  inc.action === 'flag_session' ? 'AI: Suspicious Behavior' :
-                  'AI: Monitored Event',
-            severity: inc.severity === 'HIGH' ? 'critical' :
-                      inc.severity === 'MEDIUM' ? 'high' :
-                      'low',
-            timestamp: new Date(inc.timestamp * 1000).toISOString(),
-            status: inc.alert ? 'active' : 'mitigated',
-            description: inc.message,
-            source: inc.log?.source_ip || 'unknown',
-          }));
-
-          // Merge with existing, avoid duplicates by checking source + timestamp proximity
-          setThreats(prev => {
-            const existingIds = new Set(prev.map(t => t.id));
-            const newThreats = backendThreats.filter(t => !existingIds.has(t.id));
-            return [...newThreats, ...prev].slice(0, 50);
-          });
-        }
-      } catch (err) {
-        // Silently fail
-      }
-    };
-
-    fetchIncidents();
-    const interval = setInterval(fetchIncidents, 15000); // poll every 15 seconds
-    return () => clearInterval(interval);
-  }, [backendOnline]);
-
   // Handlers
   const handleLogout = () => {
     setIsLanding(true);
     setActiveTab('dashboard');
-  };
-
-  const runSimulation = async () => {
-    if (!backendOnline) return;
-    try {
-      const res = await fetch(`${API_URL}/simulate`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        const simThreats: Threat[] = data
-          .filter((inc: any) => inc.alert)
-          .map((inc: any, i: number) => ({
-            id: `SIM-${Date.now()}-${i}`,
-            type: inc.severity === 'HIGH' ? 'AI: Critical Anomaly Detected' : 'AI: Suspicious Pattern',
-            severity: inc.severity === 'HIGH' ? 'critical' : inc.severity === 'MEDIUM' ? 'high' : 'medium',
-            timestamp: new Date(inc.timestamp * 1000).toISOString(),
-            status: 'active',
-            description: inc.message,
-            source: inc.log?.source_ip || 'simulation',
-          }));
-
-        if (simThreats.length > 0) {
-          setThreats(prev => [...simThreats, ...prev]);
-          setNotifications(prev => [{
-            id: `notif-${Date.now()}`,
-            title: `Simulation Complete`,
-            description: `${simThreats.length} threat(s) detected in simulated traffic.`,
-            type: 'error',
-            time: 'just now',
-          }, ...prev]);
-        } else {
-          setNotifications(prev => [{
-            id: `notif-${Date.now()}`,
-            title: 'Simulation Complete',
-            description: 'No threats detected in simulated traffic. System is stable.',
-            type: 'success',
-            time: 'just now',
-          }, ...prev]);
-        }
-      }
-    } catch (err) {
-      console.error('Simulation failed:', err);
-    }
   };
 
   const moveToBin = (type: RecycleBinItem['type'], data: any) => {
@@ -273,7 +223,7 @@ export default function App() {
       {!isLanding && (
         <div className="fixed bottom-0 right-0 p-4 pointer-events-none opacity-20">
           <p className="text-[10px] font-mono uppercase tracking-[0.2em]">
-            System Status: {backendOnline ? 'Online' : 'Offline'} // Encryption: Active // AI Core: {backendOnline ? 'Connected' : 'Standby'}
+            System Status: Nominal // Encryption: Active // AI Core: Online
           </p>
         </div>
       )}

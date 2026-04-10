@@ -3,10 +3,11 @@ Handles asynchronous integration with the VirusTotal v3 API. Provides functions
 to check IPs, URLs, file hashes, and perform live file uploads for scanning.
 """
 
-import os
-import httpx
+import asyncio
 import base64
-import time
+import os
+
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -105,8 +106,6 @@ async def upload_file_to_vt(file_bytes: bytes, filename: str) -> dict:
             
             # Step 2: Poll for results (limited attempts)
             for _ in range(5):
-                await httpx.AsyncClient().sleep(3) # Wait 3 seconds between polls (Note: httpx doesn't have AsyncClient.sleep, we should use asyncio.sleep. Will fix this later)
-                import asyncio
                 await asyncio.sleep(3)
                 poll_resp = await client.get(f"{BASE_URL}/analyses/{analysis_id}", headers=headers)
                 if poll_resp.status_code == 200:

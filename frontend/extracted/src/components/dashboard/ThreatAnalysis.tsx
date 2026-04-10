@@ -44,11 +44,12 @@ import {
 } from "@/components/ui/tooltip";
 import { Severity, Threat } from '@/types';
 import { cn } from '@/lib/utils';
-import { Trash2, Upload, FileSearch } from 'lucide-react';
+import { Trash2, Upload, FileSearch, Globe } from 'lucide-react';
 import { FileScanner } from './FileScanner';
+import { LinkScanner } from './LinkScanner';
 
 const severityColors: Record<Severity, string> = {
-  low: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+  low: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
   medium: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20',
   high: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
   critical: 'bg-red-500/10 text-red-500 border-red-500/20 neon-glow-red',
@@ -111,7 +112,10 @@ export const ThreatAnalysis: React.FC<ThreatAnalysisProps> = ({ threats, setThre
   return (
     <TooltipProvider>
       <div className="space-y-6">
-        <FileScanner />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <FileScanner />
+          <LinkScanner />
+        </div>
 
         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
           <div>
@@ -211,7 +215,7 @@ export const ThreatAnalysis: React.FC<ThreatAnalysisProps> = ({ threats, setThre
                       "w-2 md:w-1.5",
                       threat.severity === 'critical' ? "bg-red-500" : 
                       threat.severity === 'high' ? "bg-orange-500" : 
-                      threat.severity === 'medium' ? "bg-yellow-500" : "bg-blue-500"
+                      threat.severity === 'medium' ? "bg-yellow-500" : "bg-emerald-500"
                     )} />
                     
                     <div className="flex-1 p-6 flex flex-col md:flex-row md:items-center justify-between gap-6">

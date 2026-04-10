@@ -1,20 +1,34 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# PhantomShieldX - Advanced Cybersecurity Platform
 
-# Run and deploy your AI Studio app
+PhantomShieldX is a high-performance security dashboard designed to detect, analyze, and mitigate threats in real-time.
 
-This contains everything you need to run your app locally.
+## 💣 Killer Feature: Local Heuristic Engine
 
-View your app in AI Studio: https://ai.studio/apps/3169a11c-e651-4519-9634-8ec1ee6d5f86
+Unlike standard platforms that rely solely on external APIs, PhantomShieldX features a **Local Heuristic Engine** built directly into the client. This engine provides an immediate layer of defense before any data even leaves your machine.
 
-## Run Locally
+### Key Detection Capabilities:
+- **Magic Byte Detection**: We analyze binary file headers (Magic Bytes) to identify the *actual* file type. Even if an attacker renames `malware.exe` to `vacation.jpg`, our system will detect the executable signature and flag it.
+- **Extension Analysis**: Immediate flagging of dangerous extensions like `.exe`, `.bat`, `.ps1`, and `.vbs`.
+- **Filename Heuristics**: Detects suspicious naming patterns, double extensions (e.g., `invoice.pdf.exe`), and urgent social engineering keywords.
+- **Abnormal Size Analysis**: Flags files that deviate significantly from expected sizes for their claimed type.
 
-**Prerequisites:**  Node.js
+## 🚀 Local Setup
 
+To run PhantomShieldX on your local machine:
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+1. **Clone the repository** and navigate to the project directory.
+2. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+3. **Configure Environment Variables**:
+   - Copy `.env.example` to `.env`.
+   - Add your **Gemini API Key** to the `GEMINI_API_KEY` variable. You can get a free key from [Google AI Studio](https://aistudio.google.com/app/apikey).
+4. **Start the development server**:
+   ```bash
+   npm run dev
+   ```
+5. **Open your browser** at `http://localhost:3000`.
+
+## 🤖 AI Insights Chat
+The platform includes **PhantomAI**, a specialized cybersecurity assistant powered by Gemini. It can help you analyze logs, explain threat signatures, and provide expert security advice.

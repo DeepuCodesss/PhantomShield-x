@@ -44,16 +44,21 @@ export const ChatBot: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("GEMINI_API_KEY is not configured. Please set it in the environment.");
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
       
       // Construct history for multi-turn chat
       const history = messages.map(msg => ({
         role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.text }]
+        parts: [{ text: msg.text }],
       }));
 
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash-lite",
+        model: "gemini-3-flash-preview",
         contents: [
           ...history,
           { role: 'user', parts: [{ text: input }] }
@@ -130,7 +135,7 @@ export const ChatBot: React.FC = () => {
                     <div className={`space-y-1 ${msg.role === 'user' ? 'text-right' : ''}`}>
                       <div className={`p-4 rounded-2xl text-sm leading-relaxed ${
                         msg.role === 'user' 
-                          ? 'bg-primary text-white rounded-tr-none' 
+                          ? 'bg-primary text-primary-foreground rounded-tr-none shadow-[0_0_20px_rgba(0,242,255,0.2)]' 
                           : 'glass border-white/10 rounded-tl-none'
                       }`}>
                         {msg.text}

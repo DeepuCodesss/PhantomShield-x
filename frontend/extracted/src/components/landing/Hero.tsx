@@ -47,7 +47,7 @@ export const Hero: React.FC<HeroProps> = ({ onEnter }) => {
           transition={{ duration: 0.6, delay: 0.3 }}
           className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-12 leading-relaxed"
         >
-          PhantomShieldX01 uses advanced neural monitoring and real-time threat prediction to keep your systems invisible to attackers.
+          PhantomShieldX uses advanced neural monitoring and real-time threat prediction to keep your systems invisible to attackers.
         </motion.p>
 
         <motion.div

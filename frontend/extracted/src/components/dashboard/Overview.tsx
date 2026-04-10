@@ -26,6 +26,8 @@ import { Badge } from '@/components/ui/badge';
 import { motion } from 'motion/react';
 import { Threat, ActivityLog } from '@/types';
 
+import { ScanTypes } from './ScanTypes';
+
 const data = [
   { name: '00:00', threats: 12, traffic: 400 },
   { name: '04:00', threats: 18, traffic: 300 },
@@ -56,6 +58,11 @@ export const Overview: React.FC<OverviewProps> = ({ threats, logs, onReset, onOp
 
   return (
     <div className="space-y-6">
+      {/* Scanning Operations Section */}
+      <div className="w-full">
+        <ScanTypes />
+      </div>
+
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold">Security Overview</h2>
