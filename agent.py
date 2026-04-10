@@ -29,7 +29,7 @@ except ImportError:
     import httpx
 
 # ─── Configuration ────────────────────────────────────────────────────────────
-DEFAULT_SERVER = "http://localhost:8000"
+DEFAULT_SERVER = "https://phantomshield-x.onrender.com"
 HEARTBEAT_INTERVAL = 5  # seconds
 DEVICE_ID_FILE = os.path.join(os.path.expanduser("~"), ".phantomshield_device_id")
 
@@ -206,7 +206,7 @@ async def register_device(client: httpx.AsyncClient, server: str, device_id: str
     try:
         response = await client.post(f"{server}/agent/register", json=info, timeout=10)
         if response.status_code == 200:
-            print(f"[✓] Registered with PhantomShield server: {server}")
+            print(f"[+] Registered with PhantomShield server: {server}")
             print(f"    Device ID: {device_id}")
             print(f"    Hostname:  {info['hostname']}")
             print(f"    IP:        {info['ip']}")
@@ -230,7 +230,7 @@ async def send_apps(client: httpx.AsyncClient, server: str, device_id: str):
     """Send installed apps list (expensive, do once on startup)."""
     print("[~] Scanning installed applications...")
     apps = get_installed_apps()
-    print(f"[✓] Found {len(apps)} installed applications.")
+    print(f"[+] Found {len(apps)} installed applications.")
     try:
         await client.post(
             f"{server}/agent/apps",
@@ -239,6 +239,60 @@ async def send_apps(client: httpx.AsyncClient, server: str, device_id: str):
         )
     except Exception as e:
         print(f"[!] Could not send apps: {e}")
+
+async def run_remote_scan(client: httpx.AsyncClient, server: str, device_id: str):
+    """Executes a targeted file scan on the user's system triggered by the Admin."""
+    print("[!] REMOTE SCAN TRIGGERED BY ADMIN")
+    threats = []
+    
+    # Target high-risk directories for the hackathon context
+    target_dirs = [
+        os.path.join(os.path.expanduser("~"), "Desktop"),
+        os.path.join(os.path.expanduser("~"), "Downloads")
+    ]
+    
+    known_malware = ["ransomware_trigger.txt", "mimikatz_dump.txt"]
+    
+    for target in target_dirs:
+        if not os.path.exists(target): continue
+        for root, _, files in os.walk(target):
+            for file in files:
+                if file in known_malware:
+                    filepath = os.path.join(root, file)
+                    threats.append({
+                        "name": file,
+                        "file_path": filepath,
+                        "severity": "critical",
+                        "description": "Known malicious artifact detected during remote scan."
+                    })
+                    print(f"  [X] FOUND THREAT: {file}")
+                    
+    if threats:
+        try:
+            await client.post(
+                f"{server}/agent/threats",
+                json={"device_id": device_id, "threats": threats},
+                timeout=10
+            )
+            print(f"[+] Reported {len(threats)} threats to central server")
+        except Exception as e:
+            print(f"[!] Failed to report threats: {e}")
+    else:
+        print("[+] Scan complete. No threats found.")
+
+async def poll_commands(client: httpx.AsyncClient, server: str, device_id: str):
+    """Continuously poll for C2 commands from the admin dashboard."""
+    while True:
+        try:
+            res = await client.get(f"{server}/agent/commands", params={"device_id": device_id}, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                for cmd in data.get("commands", []):
+                    if cmd == "scan":
+                        asyncio.create_task(run_remote_scan(client, server, device_id))
+        except Exception:
+            pass
+        await asyncio.sleep(3) # Fast polling for demo purposes
 
 
 async def main(server: str):
@@ -255,6 +309,9 @@ async def main(server: str):
 
         # Send apps list in background
         asyncio.create_task(send_apps(client, server, device_id))
+
+        # Start C2 command polling
+        asyncio.create_task(poll_commands(client, server, device_id))
 
         # Heartbeat loop
         print(f"[~] Sending telemetry every {HEARTBEAT_INTERVAL}s. Press Ctrl+C to stop.\n")
@@ -275,4 +332,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main(args.server))
     except KeyboardInterrupt:
-        print("\n[✓] Agent stopped.")
+        print("\n[+] Agent stopped.")

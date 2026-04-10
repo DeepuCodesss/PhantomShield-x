@@ -77,6 +77,8 @@ async def agent_register(payload: AgentRegisterPayload):
         "telemetry": {},
         "apps": [],
         "status": "online",
+        "commands": [],
+        "remote_threats": []
     }
     print(f"[AGENT] New device registered: {payload.hostname} ({payload.ip})")
     return {"status": "registered", "device_id": device_id}
@@ -90,6 +92,8 @@ async def agent_heartbeat(payload: AgentHeartbeatPayload):
         agents[device_id] = {
             "info": {"device_id": device_id, "hostname": "Unknown", "ip": "unknown", "os": "unknown"},
             "apps": [],
+            "commands": [],
+            "remote_threats": []
         }
     agents[device_id]["last_heartbeat"] = time.time()
     agents[device_id]["telemetry"] = payload.dict()
@@ -143,7 +147,58 @@ async def admin_get_device(device_id: str):
         "telemetry": agent.get("telemetry", {}),
         "apps": agent.get("apps", []),
         "apps_count": len(agent.get("apps", [])),
+        "remote_threats": agent.get("remote_threats", [])
     }
+
+class CommandPayload(BaseModel):
+    command: str
+
+@app.post("/admin/device/{device_id}/command")
+async def admin_queue_command(device_id: str, payload: CommandPayload):
+    """Admin triggers a command (like 'scan') for the remote device."""
+    if device_id not in agents:
+        raise HTTPException(status_code=404, detail="Device not found")
+    agents[device_id].setdefault("commands", []).append(payload.command)
+    return {"status": "queued"}
+
+@app.get("/agent/commands")
+async def agent_get_commands(device_id: str):
+    """Agent polls this to see if it needs to execute anything."""
+    if device_id in agents:
+        cmds = agents[device_id].get("commands", [])
+        agents[device_id]["commands"] = [] # Clear once fetched
+        return {"commands": cmds}
+    return {"commands": []}
+
+class ThreatPayload(BaseModel):
+    device_id: str
+    threats: List[dict]
+
+@app.post("/agent/threats")
+async def agent_report_threats(payload: ThreatPayload):
+    """Agent reports found threats from local scans or active processes."""
+    device_id = payload.device_id
+    if device_id in agents:
+        agents[device_id]["remote_threats"] = payload.threats
+        
+        # Optionally create a global incident for the centralized dashboard
+        for threat in payload.threats:
+            incident_record = {
+                "risk_score": 90 if threat.get('severity') == 'critical' else 60,
+                "vt_result": {"malicious": True, "score": 90, "tags": ["agent-scan"]},
+                "severity": threat.get("severity", "high"),
+                "action": "block" if threat.get('severity') == 'critical' else "warn",
+                "alert": f"Remote Threat Detected: {threat.get('name')}",
+                "message": threat.get("description", ""),
+                "log": {"device": device_id, "filepath": threat.get("file_path"), "type": "remote_scan"},
+                "timestamp": time.time()
+            }
+            incidents.insert(0, incident_record)
+            if len(incidents) > 50:
+                incidents.pop()
+                
+    return {"status": "ok"}
+
 
 
 

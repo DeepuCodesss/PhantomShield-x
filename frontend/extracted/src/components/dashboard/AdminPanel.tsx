@@ -44,6 +44,7 @@ interface AgentDevice {
 
 interface DeviceDetail extends AgentDevice {
   apps: { name: string; version: string; publisher: string }[];
+  remote_threats?: { name: string; file_path: string; severity: string; description: string }[];
 }
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -140,6 +141,22 @@ const DeviceDetailPanel: React.FC<{ deviceId: string; onClose: () => void }> = (
   const [detail, setDetail] = useState<DeviceDetail | null>(null);
   const [tab, setTab] = useState<'overview' | 'processes' | 'connections' | 'apps'>('overview');
   const [appSearch, setAppSearch] = useState('');
+  const [isScanning, setIsScanning] = useState(false);
+
+  const triggerScan = async () => {
+    setIsScanning(true);
+    try {
+      await fetch(`${API_URL}/admin/device/${deviceId}/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'scan' })
+      });
+      // Simulate scan duration for UI effect
+      setTimeout(() => setIsScanning(false), 5000);
+    } catch {
+      setIsScanning(false);
+    }
+  };
 
   useEffect(() => {
     const fetch_ = async () => {
@@ -181,7 +198,45 @@ const DeviceDetailPanel: React.FC<{ deviceId: string; onClose: () => void }> = (
           </div>
           <p className="text-sm text-muted-foreground font-mono">{detail.info.ip} · {detail.info.os} · {detail.info.username}</p>
         </div>
+        <button
+          onClick={triggerScan}
+          disabled={!isOnline || isScanning}
+          className={cn(
+            "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2",
+            isScanning ? "bg-primary/20 text-primary animate-pulse" : "bg-primary text-primary-foreground hover:bg-primary/90",
+            !isOnline && "opacity-50 cursor-not-allowed"
+          )}
+        >
+          {isScanning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
+          {isScanning ? 'SCANNING REMOTE SYSTEM...' : 'TRIGGER REMOTE SCAN'}
+        </button>
       </div>
+
+      {detail.remote_threats && detail.remote_threats.length > 0 && (
+        <Card className="border-red-500/50 bg-red-500/5 mt-4">
+          <CardHeader className="py-3">
+            <CardTitle className="text-red-500 text-sm flex items-center gap-2 uppercase tracking-wide">
+              <AlertTriangle className="w-4 h-4" /> Active Malware Found on Device
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {detail.remote_threats.map((threat, idx) => (
+              <div key={idx} className="flex justify-between items-center p-3 glass border-red-500/20 rounded-lg">
+                <div>
+                  <h4 className="font-bold text-red-400 font-mono text-sm">{threat.name}</h4>
+                  <p className="text-xs text-muted-foreground mt-1">{threat.description}</p>
+                </div>
+                <div className="text-right">
+                  <Badge className="bg-red-500/20 text-red-500 hover:bg-red-500/20">{threat.severity}</Badge>
+                  <p className="text-[10px] font-mono text-muted-foreground mt-2 truncate w-48" title={threat.file_path}>
+                    {threat.file_path}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-2 border-b border-white/5 pb-3">
