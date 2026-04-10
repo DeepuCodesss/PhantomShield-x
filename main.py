@@ -183,14 +183,16 @@ async def agent_report_threats(payload: ThreatPayload):
         
         # Optionally create a global incident for the centralized dashboard
         for threat in payload.threats:
+            is_deleted = threat.get("status") == "deleted"
+            
             incident_record = {
                 "risk_score": 90 if threat.get('severity') == 'critical' else 60,
-                "vt_result": {"malicious": True, "score": 90, "tags": ["agent-scan"]},
+                "vt_result": {"malicious": True, "score": 90, "tags": ["agent-scan", "auto-deleted" if is_deleted else "detected"]},
                 "severity": threat.get("severity", "high"),
-                "action": "block" if threat.get('severity') == 'critical' else "warn",
-                "alert": f"Remote Threat Detected: {threat.get('name')}",
+                "action": "DELETED" if is_deleted else ("block" if threat.get('severity') == 'critical' else "warn"),
+                "alert": f"Remote Threat {'Auto-deleted' if is_deleted else 'Detected'}: {threat.get('name')}",
                 "message": threat.get("description", ""),
-                "log": {"device": device_id, "filepath": threat.get("file_path"), "type": "remote_scan"},
+                "log": {"device": device_id, "filepath": threat.get("file_path"), "type": "remote_scan", "status": "deleted" if is_deleted else "active"},
                 "timestamp": time.time()
             }
             incidents.insert(0, incident_record)

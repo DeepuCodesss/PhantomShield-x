@@ -295,6 +295,51 @@ async def poll_commands(client: httpx.AsyncClient, server: str, device_id: str):
         await asyncio.sleep(3) # Fast polling for demo purposes
 
 
+async def active_protection_monitor(client: httpx.AsyncClient, server: str, device_id: str):
+    """Background scanner that actively deletes malware immediately upon creation."""
+    print("[+] Active Protection Module Online. Watching file system...")
+    
+    desktop_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+    if not os.path.exists(desktop_dir): return
+
+    malicious_keywords = ["virus", "malware", "ransomware", "trojan", "mimikatz"]
+    
+    seen_files = set(os.listdir(desktop_dir))
+    
+    while True:
+        try:
+            current_files = set(os.listdir(desktop_dir))
+            new_files = current_files - seen_files
+            
+            for file in new_files:
+                file_lower = file.lower()
+                if any(word in file_lower for word in malicious_keywords):
+                    filepath = os.path.join(desktop_dir, file)
+                    try:
+                        os.remove(filepath) # INSTANTLY DELETE
+                        print(f"  [!!!] ACTIVE PROTECTION: DELETED {file}")
+                        
+                        # Report to dashboard
+                        threats = [{
+                            "name": file,
+                            "file_path": filepath,
+                            "severity": "critical",
+                            "status": "deleted",
+                            "description": "Malware automatically neutralized by Active Protection Engine."
+                        }]
+                        await client.post(
+                            f"{server}/agent/threats",
+                            json={"device_id": device_id, "threats": threats},
+                            timeout=5
+                        )
+                    except Exception as e:
+                        print(f"  [!] Failed to delete {file}: {e}")
+                        
+            seen_files = current_files
+        except Exception:
+            pass
+        await asyncio.sleep(2) # Near real-time monitoring
+
 async def main(server: str):
     device_id = get_or_create_device_id()
     psutil.cpu_percent(interval=None)  # Prime the CPU meter
@@ -312,6 +357,9 @@ async def main(server: str):
 
         # Start C2 command polling
         asyncio.create_task(poll_commands(client, server, device_id))
+        
+        # Start Active Protection Real-time Watcher
+        asyncio.create_task(active_protection_monitor(client, server, device_id))
 
         # Heartbeat loop
         print(f"[~] Sending telemetry every {HEARTBEAT_INTERVAL}s. Press Ctrl+C to stop.\n")

@@ -216,19 +216,30 @@ const DeviceDetailPanel: React.FC<{ deviceId: string; onClose: () => void }> = (
         <Card className="border-red-500/50 bg-red-500/5 mt-4">
           <CardHeader className="py-3">
             <CardTitle className="text-red-500 text-sm flex items-center gap-2 uppercase tracking-wide">
-              <AlertTriangle className="w-4 h-4" /> Active Malware Found on Device
+              <AlertTriangle className="w-4 h-4" /> Malware History on Device
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {detail.remote_threats.map((threat, idx) => (
-              <div key={idx} className="flex justify-between items-center p-3 glass border-red-500/20 rounded-lg">
+            {detail.remote_threats.map((threat: any, idx) => (
+              <div key={idx} className={cn(
+                "flex justify-between items-center p-3 glass rounded-lg border",
+                threat.status === 'deleted' ? "border-emerald-500/30 bg-emerald-500/5" : "border-red-500/20"
+              )}>
                 <div>
-                  <h4 className="font-bold text-red-400 font-mono text-sm">{threat.name}</h4>
+                  <h4 className={cn("font-bold font-mono text-sm", threat.status === 'deleted' ? 'text-emerald-400' : 'text-red-400')}>{threat.name}</h4>
                   <p className="text-xs text-muted-foreground mt-1">{threat.description}</p>
                 </div>
                 <div className="text-right">
-                  <Badge className="bg-red-500/20 text-red-500 hover:bg-red-500/20">{threat.severity}</Badge>
-                  <p className="text-[10px] font-mono text-muted-foreground mt-2 truncate w-48" title={threat.file_path}>
+                  <Badge className={cn(
+                    "hover:bg-opacity-20",
+                    threat.status === 'deleted' ? "bg-emerald-500/20 text-emerald-500 border-emerald-500/50" : "bg-red-500/20 text-red-500"
+                  )}>
+                    {threat.status === 'deleted' ? 'DELETED' : threat.severity}
+                  </Badge>
+                  <p className={cn(
+                    "text-[10px] font-mono mt-2 truncate w-48",
+                    threat.status === 'deleted' ? "text-emerald-500/80 line-through" : "text-muted-foreground"
+                  )} title={threat.file_path}>
                     {threat.file_path}
                   </p>
                 </div>
