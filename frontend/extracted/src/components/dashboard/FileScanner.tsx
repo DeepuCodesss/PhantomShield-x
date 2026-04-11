@@ -68,7 +68,7 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
     setScanning(true);
     setResults([]);
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const API_URL = import.meta.env.VITE_API_URL || 'https://phantomshield-x.onrender.com';
     const scanResults = await Promise.all(files.map(async (file) => {
       try {
         const formData = new FormData();

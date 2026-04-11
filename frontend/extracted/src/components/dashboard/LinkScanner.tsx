@@ -22,7 +22,7 @@ export const LinkScanner: React.FC = () => {
     setScanning(true);
     setResult(null);
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const API_URL = import.meta.env.VITE_API_URL || 'https://phantomshield-x.onrender.com';
     const scanUrl = url.startsWith('http') ? url : `https://${url}`;
 
     try {
