@@ -40,9 +40,13 @@ export default function App() {
         if (data && data.length > 0) {
           const liveThreats = data.map((inc: any, i: number) => {
             const isSystemMetric = inc.log.action === 'system_metric';
+            const isRemoteScan = inc.log.type === 'remote_scan';
             
             let finalSeverity = inc.severity.toLowerCase();
-            if (isSystemMetric) {
+            if (isRemoteScan) {
+              // Agent-reported threats are always critical/high
+              finalSeverity = inc.severity?.toLowerCase() || 'critical';
+            } else if (isSystemMetric) {
                // Only flag system metrics as threats if risk score is extreme
                if (inc.risk_score >= 95) {
                    finalSeverity = 'critical';
@@ -56,16 +60,20 @@ export default function App() {
 
             return {
               id: `live-${inc.timestamp}-${i}`,
-              type: isSystemMetric 
-                ? (isRealThreat ? 'System Anomaly Detected' : 'System Status Safe') 
-                : (isRealThreat ? 'Network Incident' : 'Network Activity'),
+              type: isRemoteScan
+                ? `Remote Agent: ${inc.alert || 'Threat Detected'}`
+                : isSystemMetric 
+                  ? (isRealThreat ? 'System Anomaly Detected' : 'System Status Safe') 
+                  : (isRealThreat ? 'Network Incident' : 'Network Activity'),
               severity: finalSeverity,
-              source: inc.log.source_ip || 'unknown',
+              source: isRemoteScan ? (inc.log.device || inc.log.source_ip || 'remote-agent') : (inc.log.source_ip || 'unknown'),
               status: isRealThreat ? 'active' : 'resolved',
               timestamp: inc.log.datetime || new Date().toISOString(),
-              description: isSystemMetric 
-                ? `Host Metrics - CPU: ${inc.log.cpu_usage}%, RAM: ${inc.log.memory_usage}%. Protocol: ${inc.log.protocol} on Port: ${inc.log.port}`
-                : inc.message
+              description: isRemoteScan
+                ? `${inc.message || inc.alert || 'Remote threat detected'} | File: ${inc.log.filepath || 'unknown'} | Device: ${inc.log.device || 'unknown'} | Status: ${inc.log.status || 'detected'}`
+                : isSystemMetric 
+                  ? `Host Metrics - CPU: ${inc.log.cpu_usage}%, RAM: ${inc.log.memory_usage}%. Protocol: ${inc.log.protocol} on Port: ${inc.log.port}`
+                  : inc.message
             };
           });
           
@@ -74,13 +82,18 @@ export default function App() {
           // Build real activity logs from incidents
           const liveLogs: ActivityLog[] = data.map((inc: any, i: number) => {
             const isSystemMetric = inc.log.action === 'system_metric';
+            const isRemoteScan = inc.log.type === 'remote_scan';
             const sev = inc.severity?.toUpperCase() || 'LOW';
             
             let logType: 'system' | 'security' | 'user' = 'system';
             let event = 'System Telemetry';
             let details = '';
             
-            if (isSystemMetric) {
+            if (isRemoteScan) {
+              logType = 'security';
+              event = `Agent Alert: ${inc.alert || 'Remote Threat Detected'}`;
+              details = `Device: ${inc.log.device || 'unknown'} | File: ${inc.log.filepath || 'unknown'} | Status: ${inc.log.status || 'detected'}`;
+            } else if (isSystemMetric) {
               logType = 'system';
               event = `System Monitor — CPU ${inc.log.cpu_usage}%, RAM ${inc.log.memory_usage}%`;
               details = `Protocol: ${inc.log.protocol} | Port: ${inc.log.port} | Target: ${inc.log.source_ip}`;

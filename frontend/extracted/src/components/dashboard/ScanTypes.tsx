@@ -75,6 +75,7 @@ const scanTypes: ScanType[] = [
 export const ScanTypes: React.FC = () => {
   const [activeScan, setActiveScan] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [completedScans, setCompletedScans] = useState<string[]>([]);
   const [currentFile, setCurrentFile] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -328,8 +329,32 @@ export const ScanTypes: React.FC = () => {
                           <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">{infectedFiles.length} threat(s) remaining</span>
                           <div className="flex items-center gap-2">
                             <button onClick={() => setInfectedFiles([])} className="px-3 py-1.5 flex items-center gap-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded border border-blue-500/20 transition-all font-mono text-[10px] font-bold whitespace-nowrap"><Flag className="w-3 h-3 shrink-0" /> KEEP ALL</button>
-                            <button onClick={() => setInfectedFiles([])} className="px-3 py-1.5 flex items-center gap-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded border border-emerald-500/20 transition-all font-mono text-[10px] font-bold whitespace-nowrap"><Shield className="w-3 h-3 shrink-0" /> QUARANTINE ALL</button>
-                            <button onClick={() => setInfectedFiles([])} className="px-3 py-1.5 flex items-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded border border-red-500/20 transition-all font-mono text-[10px] font-bold whitespace-nowrap"><Trash2 className="w-3 h-3 shrink-0" /> DELETE ALL</button>
+                            <button disabled={isDeleting} onClick={async () => {
+                              setIsDeleting(true);
+                              try {
+                                const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+                                await fetch(`${API_URL}/quarantine/files`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ files: infectedFiles })
+                                });
+                              } catch (e) { console.error('Quarantine error', e); }
+                              setIsDeleting(false);
+                              setInfectedFiles([]);
+                            }} className="px-3 py-1.5 flex items-center gap-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded border border-emerald-500/20 transition-all font-mono text-[10px] font-bold whitespace-nowrap disabled:opacity-50"><Shield className="w-3 h-3 shrink-0" /> {isDeleting ? 'WORKING...' : 'QUARANTINE ALL'}</button>
+                            <button disabled={isDeleting} onClick={async () => {
+                              setIsDeleting(true);
+                              try {
+                                const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+                                await fetch(`${API_URL}/delete/files`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ files: infectedFiles })
+                                });
+                              } catch (e) { console.error('Delete error', e); }
+                              setIsDeleting(false);
+                              setInfectedFiles([]);
+                            }} className="px-3 py-1.5 flex items-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded border border-red-500/20 transition-all font-mono text-[10px] font-bold whitespace-nowrap disabled:opacity-50"><Trash2 className="w-3 h-3 shrink-0" /> {isDeleting ? 'DELETING...' : 'DELETE ALL'}</button>
                           </div>
                         </div>
 
@@ -344,8 +369,28 @@ export const ScanTypes: React.FC = () => {
                                     <span className="font-mono text-xs text-red-100 break-all whitespace-normal leading-relaxed">{file}</span>
                                   </div>
                                   <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-                                      <button onClick={() => setInfectedFiles(prev => prev.filter(f => f !== file))} className="px-3 py-1.5 flex items-center gap-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded border border-emerald-500/20 transition-all font-mono text-[10px] font-bold whitespace-nowrap" title="Quarantine Payload"><Shield className="w-3 h-3 shrink-0" /> QUARANTINE</button>
-                                      <button onClick={() => setInfectedFiles(prev => prev.filter(f => f !== file))} className="px-3 py-1.5 flex items-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded border border-red-500/20 transition-all font-mono text-[10px] font-bold whitespace-nowrap" title="Delete Payload"><Trash2 className="w-3 h-3 shrink-0" /> DELETE</button>
+                                      <button onClick={async () => {
+                                        try {
+                                          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+                                          await fetch(`${API_URL}/quarantine/files`, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ files: [file] })
+                                          });
+                                        } catch (e) { console.error('Quarantine error', e); }
+                                        setInfectedFiles(prev => prev.filter(f => f !== file));
+                                      }} className="px-3 py-1.5 flex items-center gap-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded border border-emerald-500/20 transition-all font-mono text-[10px] font-bold whitespace-nowrap" title="Quarantine Payload"><Shield className="w-3 h-3 shrink-0" /> QUARANTINE</button>
+                                      <button onClick={async () => {
+                                        try {
+                                          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+                                          await fetch(`${API_URL}/delete/files`, {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ files: [file] })
+                                          });
+                                        } catch (e) { console.error('Delete error', e); }
+                                        setInfectedFiles(prev => prev.filter(f => f !== file));
+                                      }} className="px-3 py-1.5 flex items-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded border border-red-500/20 transition-all font-mono text-[10px] font-bold whitespace-nowrap" title="Delete Payload"><Trash2 className="w-3 h-3 shrink-0" /> DELETE</button>
                                   </div>
                                </div>
                            ))}

@@ -3,7 +3,6 @@ import { Upload, FileSearch, FileText, Image, X, ShieldAlert, ShieldCheck, Loade
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
-import { analyzeFile, HeuristicResult } from '@/lib/heuristicEngine';
 
 interface FileScannerProps {
   onScanComplete?: (results: any) => void;
@@ -38,7 +37,7 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
     e.stopPropagation();
     setIsDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const droppedFiles = Array.from(e.dataTransfer.files);
+      const droppedFiles: File[] = Array.from(e.dataTransfer.files);
       setFiles(prev => {
         // Prevent duplicate append if onChange also fired
         const newFiles = droppedFiles.filter(df => !prev.some(pf => pf.name === df.name && pf.size === df.size));
@@ -49,7 +48,7 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const selectedFiles = Array.from(e.target.files);
+      const selectedFiles: File[] = Array.from(e.target.files);
       setFiles(prev => {
         const newFiles = selectedFiles.filter(df => !prev.some(pf => pf.name === df.name && pf.size === df.size));
         return [...prev, ...newFiles];
@@ -65,26 +64,26 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
 
   const startScan = async () => {
     if (files.length === 0) return;
-    
+
     setScanning(true);
     setResults([]);
-    
+
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
     const scanResults = await Promise.all(files.map(async (file) => {
       try {
         const formData = new FormData();
         formData.append('file', file);
-        
+
         const response = await fetch(`${API_URL}/scan/file`, {
           method: 'POST',
           body: formData
         });
-        
+
         if (!response.ok) throw new Error('Scan failed');
         const data = await response.json();
-        
+
         const isThreat = data.risk_score >= 35; // SUSPICIOUS or DANGEROUS
-        
+
         return {
           fileName: file.name,
           status: isThreat ? 'threat' : 'clean' as 'clean' | 'threat',
@@ -101,7 +100,7 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
         };
       }
     }));
-    
+
     setResults(scanResults);
     setScanning(false);
     if (onScanComplete) onScanComplete(scanResults);
@@ -119,7 +118,7 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
             <p className="text-xs text-muted-foreground">Upload files or images to detect hidden threats and malware signatures.</p>
           </div>
           {files.length > 0 && !scanning && (
-            <button 
+            <button
               onClick={startScan}
               className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-bold hover:opacity-90 transition-all neon-glow-cyan flex items-center gap-2"
             >
@@ -129,7 +128,7 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
           )}
         </div>
 
-        <div 
+        <div
           onDragEnter={onDragEnter}
           onDragOver={onDragOver}
           onDragLeave={onDragLeave}
@@ -140,18 +139,18 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
             scanning && "border-primary/50"
           )}
         >
-          <input 
-            type="file" 
-            multiple 
+          <input
+            type="file"
+            multiple
             onChange={handleFileSelect}
             title=""
             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
             disabled={scanning}
           />
-          
+
           <AnimatePresence>
             {scanning && (
-              <motion.div 
+              <motion.div
                 initial={{ top: '-100%' }}
                 animate={{ top: '100%' }}
                 transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
@@ -168,7 +167,7 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
                 <Upload className={cn("w-8 h-8 transition-colors", isDragging ? "text-primary" : "text-muted-foreground")} />
               )}
             </div>
-            
+
             <h4 className="text-lg font-medium mb-1">
               {scanning ? "Analyzing File Signatures..." : "Drag & drop files here"}
             </h4>
@@ -185,7 +184,7 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
 
         <AnimatePresence>
           {files.length > 0 && (
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
@@ -195,12 +194,12 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
                 <span>Queue ({files.length} files)</span>
                 <button onClick={() => { setFiles([]); setResults([]); }} className="hover:text-red-500 transition-colors">Clear All</button>
               </div>
-              
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {files.map((file, i) => {
                   const result = results.find(r => r.fileName === file.name);
                   return (
-                    <motion.div 
+                    <motion.div
                       key={`${file.name}-${i}`}
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
@@ -227,11 +226,11 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
                           )}
                         </div>
                       </div>
-                      
+
                       <div className="flex items-center gap-2">
                         <AnimatePresence mode="wait">
                           {scanning ? (
-                            <motion.div 
+                            <motion.div
                               key="scanning"
                               initial={{ opacity: 0, scale: 0.8 }}
                               animate={{ opacity: 1, scale: 1 }}
@@ -242,14 +241,14 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
                               <span className="text-[10px] font-bold text-primary uppercase tracking-tighter animate-pulse">Scanning</span>
                             </motion.div>
                           ) : result ? (
-                            <motion.div 
+                            <motion.div
                               key="result"
                               initial={{ opacity: 0, scale: 0.8 }}
                               animate={{ opacity: 1, scale: 1 }}
                               className={cn(
                                 "flex items-center gap-1.5 text-[10px] font-bold uppercase px-3 py-1 rounded-full border shadow-sm",
-                                result.status === 'clean' 
-                                  ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" 
+                                result.status === 'clean'
+                                  ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
                                   : "bg-red-500/10 text-red-500 border-red-500/20 neon-glow-red"
                               )}
                             >
@@ -261,7 +260,7 @@ export const FileScanner: React.FC<FileScannerProps> = ({ onScanComplete }) => {
                               {result.status}
                             </motion.div>
                           ) : (
-                            <motion.button 
+                            <motion.button
                               key="remove"
                               initial={{ opacity: 0 }}
                               animate={{ opacity: 1 }}
