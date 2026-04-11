@@ -44,7 +44,7 @@ export const ChatBot: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyDlvVlLd9riCICcj5k6pKR_sOlWfbM3uDc";
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
       if (!apiKey) {
         throw new Error("API Key is not configured. Please set VITE_GEMINI_API_KEY in the environment.");
       }
