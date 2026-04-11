@@ -303,15 +303,14 @@ async def run_remote_scan(client: httpx.AsyncClient, server: str, device_id: str
     ]
     
     # Only flag files whose name clearly indicates malware intent (exact pattern matching)
-    # These patterns must appear as the PRIMARY name, not as part of a tool name like "virustotal"
     malware_filenames = [
         "ransomware_trigger", "mimikatz_dump", "trojan_payload",
         "keylogger", "backdoor", "exploit_kit",
     ]
     
     # Also flag if the ENTIRE filename (without extension) is one of these standalone keywords
-    standalone_keywords = ["malware", "ransomware", "trojan", "mimikatz", 
-                           "exploit", "payload", "keylogger", "backdoor"]
+    standalone_keywords = ["virus", "malware", "ransomware", "trojan", "mimikatz", 
+                           "exploit", "payload", "keylogger", "backdoor", "hack"]
     
     # Skip these directories (dev tools, not threats)
     skip_dirs = {"node_modules", ".git", "__pycache__", "venv", ".venv", "env", 
@@ -374,6 +373,22 @@ async def run_remote_scan(client: httpx.AsyncClient, server: str, device_id: str
         )
     else:
         print(f"[+] Scan complete. {scanned_count} files scanned. No threats found.")
+        # Report clean status to admin dashboard
+        try:
+            clean_report = [{
+                "name": "SCAN_COMPLETE",
+                "file_path": "N/A",
+                "severity": "low",
+                "status": "clean",
+                "description": f"Remote scan completed. {scanned_count} files scanned. System is clean."
+            }]
+            await client.post(
+                f"{server}/agent/threats",
+                json={"device_id": device_id, "threats": clean_report},
+                timeout=10
+            )
+        except Exception:
+            pass
         _show_scan_notification(
             "✅ Scan Complete — System Clean",
             f"Scanned {scanned_count} files across your system. No threats detected.",
@@ -399,15 +414,20 @@ async def active_protection_monitor(client: httpx.AsyncClient, server: str, devi
     """Background scanner that actively deletes malware immediately upon creation."""
     print("[+] Active Protection Module Online. Watching file system...")
     
-    desktop_dirs = [
+    watch_dirs = [
         os.path.join(os.path.expanduser("~"), "Desktop"),
-        os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop")
+        os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop"),
+        os.path.join(os.path.expanduser("~"), "Downloads"),
     ]
     
-    malicious_keywords = ["virus", "malware", "ransomware", "trojan", "mimikatz"]
+    malicious_keywords = ["virus", "malware", "ransomware", "trojan", "mimikatz",
+                          "hack", "exploit", "payload", "keylogger", "backdoor"]
     
-    seen_files = {} # dict mapping dir to set of files
-    for d in desktop_dirs:
+    # Whitelist: legit files that contain keywords but aren't threats
+    whitelist = ["virustotal", "antivirus", "hackathon", "explorerframe"]
+    
+    seen_files = {}
+    for d in watch_dirs:
         if os.path.exists(d):
             try:
                 seen_files[d] = set(os.listdir(d))
@@ -428,6 +448,9 @@ async def active_protection_monitor(client: httpx.AsyncClient, server: str, devi
                 
                 for file in new_files:
                     file_lower = file.lower()
+                    # Skip whitelisted filenames
+                    if any(wl in file_lower for wl in whitelist):
+                        continue
                     if any(word in file_lower for word in malicious_keywords):
                         filepath = os.path.join(d, file)
                         try:
@@ -479,11 +502,40 @@ async def usb_monitor(client: httpx.AsyncClient, server: str, device_id: str):
             new_drives = current_drives - known_drives
             for drive in new_drives:
                 print(f"[!] New Drive Detected: {drive}")
-                # Instantly scan the drive
+                
+                # Show user notification about USB detection
+                _show_scan_notification(
+                    "\ud83d\udd0c USB Drive Detected",
+                    f"New drive {drive} connected. PhantomShield is scanning for threats...",
+                    "#4D8AF0"
+                )
+                
+                # Report USB insertion to admin dashboard
+                try:
+                    usb_alert = [{
+                        "name": f"USB_CONNECTED: {drive}",
+                        "file_path": drive,
+                        "severity": "medium",
+                        "status": "scanning",
+                        "description": f"USB drive {drive} was connected to this device. Scanning in progress..."
+                    }]
+                    await client.post(
+                        f"{server}/agent/threats",
+                        json={"device_id": device_id, "threats": usb_alert},
+                        timeout=10
+                    )
+                except Exception:
+                    pass
+                
+                # Scan the USB drive
                 threats = []
+                scanned = 0
                 for root, _, files in os.walk(drive):
                     for file in files:
-                        if any(kw in file.lower() for kw in malicious_keywords):
+                        scanned += 1
+                        file_lower = file.lower()
+                        # Check for malicious keywords
+                        if any(kw in file_lower for kw in malicious_keywords):
                             filepath = os.path.join(root, file)
                             try:
                                 if os.path.isfile(filepath):
@@ -493,11 +545,12 @@ async def usb_monitor(client: httpx.AsyncClient, server: str, device_id: str):
                                         "file_path": filepath,
                                         "severity": "critical",
                                         "status": "deleted",
-                                        "description": f"USB malware neutralized upon insertion onto {drive}"
+                                        "description": f"USB malware '{file}' auto-deleted from {drive}"
                                     })
                                     print(f"  [X] USB THREAT DELETED: {file}")
                             except Exception:
                                 pass
+                
                 if threats:
                     try:
                         await client.post(
@@ -507,6 +560,33 @@ async def usb_monitor(client: httpx.AsyncClient, server: str, device_id: str):
                         )
                     except Exception:
                         pass
+                    _show_scan_notification(
+                        f"\ud83d\udea8 USB: {len(threats)} Threat(s) Deleted!",
+                        f"Scanned {scanned} files on {drive}. {len(threats)} malware file(s) auto-deleted.",
+                        "#ef4444"
+                    )
+                else:
+                    # Report clean USB to admin
+                    try:
+                        clean_usb = [{
+                            "name": f"USB_CLEAN: {drive}",
+                            "file_path": drive,
+                            "severity": "low",
+                            "status": "clean",
+                            "description": f"USB drive {drive} scanned. {scanned} files checked. No threats found."
+                        }]
+                        await client.post(
+                            f"{server}/agent/threats",
+                            json={"device_id": device_id, "threats": clean_usb},
+                            timeout=10
+                        )
+                    except Exception:
+                        pass
+                    _show_scan_notification(
+                        "\u2705 USB Drive Clean",
+                        f"Scanned {scanned} files on {drive}. No threats found.",
+                        "#10b981"
+                    )
                         
             known_drives = current_drives
         except Exception:
