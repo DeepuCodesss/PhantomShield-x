@@ -44,9 +44,9 @@ export const ChatBot: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyDlvVlLd9riCICcj5k6pKR_sOlWfbM3uDc";
       if (!apiKey) {
-        throw new Error("GEMINI_API_KEY is not configured. Please set it in the environment.");
+        throw new Error("API Key is not configured. Please set VITE_GEMINI_API_KEY in the environment.");
       }
 
       const ai = new GoogleGenAI({ apiKey });
