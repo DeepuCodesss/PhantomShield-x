@@ -164,11 +164,39 @@ def get_network_connections():
 
 def collect_telemetry(device_id: str) -> dict:
     """Collect complete system snapshot."""
-    cpu = psutil.cpu_percent(interval=None)
-    mem = psutil.virtual_memory()
-    disk = psutil.disk_usage("/") if platform.system() != "Windows" else psutil.disk_usage("C:\\")
-    net = psutil.net_io_counters()
-    boot_time = psutil.boot_time()
+    cpu = 0
+    try: cpu = psutil.cpu_percent(interval=None)
+    except Exception: pass
+    
+    mem_total, mem_used, mem_percent = 0, 0, 0
+    try:
+        mem = psutil.virtual_memory()
+        mem_total = round(mem.total / (1024**3), 2)
+        mem_used = round(mem.used / (1024**3), 2)
+        mem_percent = mem.percent
+    except Exception: pass
+    
+    disk_total, disk_used, disk_percent = 0, 0, 0
+    try:
+        disk = psutil.disk_usage("/") if platform.system() != "Windows" else psutil.disk_usage("C:\\")
+        disk_total = round(disk.total / (1024**3), 2)
+        disk_used = round(disk.used / (1024**3), 2)
+        disk_percent = disk.percent
+    except Exception: pass
+    
+    net_sent, net_recv, p_sent, p_recv = 0, 0, 0, 0
+    try:
+        net = psutil.net_io_counters()
+        net_sent, net_recv, p_sent, p_recv = net.bytes_sent, net.bytes_recv, net.packets_sent, net.packets_recv
+    except Exception: pass
+    
+    boot_time = 0
+    try: boot_time = psutil.boot_time()
+    except Exception: pass
+
+    cpu_freq = 0
+    try: cpu_freq = round(psutil.cpu_freq().current, 1) if psutil.cpu_freq() else 0
+    except Exception: pass
 
     return {
         "device_id": device_id,
@@ -176,24 +204,24 @@ def collect_telemetry(device_id: str) -> dict:
         "datetime": datetime.now().isoformat(),
         "cpu": {
             "percent": cpu,
-            "cores": psutil.cpu_count(),
-            "freq_mhz": round(psutil.cpu_freq().current, 1) if psutil.cpu_freq() else 0,
+            "cores": psutil.cpu_count() or 1,
+            "freq_mhz": cpu_freq,
         },
         "memory": {
-            "total_gb": round(mem.total / (1024**3), 2),
-            "used_gb": round(mem.used / (1024**3), 2),
-            "percent": mem.percent,
+            "total_gb": mem_total,
+            "used_gb": mem_used,
+            "percent": mem_percent,
         },
         "disk": {
-            "total_gb": round(disk.total / (1024**3), 2),
-            "used_gb": round(disk.used / (1024**3), 2),
-            "percent": disk.percent,
+            "total_gb": disk_total,
+            "used_gb": disk_used,
+            "percent": disk_percent,
         },
         "network": {
-            "bytes_sent": net.bytes_sent,
-            "bytes_recv": net.bytes_recv,
-            "packets_sent": net.packets_sent,
-            "packets_recv": net.packets_recv,
+            "bytes_sent": net_sent,
+            "bytes_recv": net_recv,
+            "packets_sent": p_sent,
+            "packets_recv": p_recv,
         },
         "boot_time": boot_time,
         "active_connections": get_network_connections(),
@@ -231,10 +259,11 @@ async def register_device(client: httpx.AsyncClient, server: str, device_id: str
 
 async def send_heartbeat(client: httpx.AsyncClient, server: str, device_id: str):
     """Send live telemetry snapshot."""
-    telemetry = collect_telemetry(device_id)
     try:
+        telemetry = collect_telemetry(device_id)
         await client.post(f"{server}/agent/heartbeat", json=telemetry, timeout=5)
-    except Exception:
+    except Exception as e:
+        print(f"Heartbeat collect/send error: {e}")
         pass  # Silently retry on next tick
 
 
