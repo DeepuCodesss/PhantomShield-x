@@ -13,6 +13,7 @@ import asyncio
 import psutil
 import httpx
 import os
+import shutil
 import random
 from datetime import datetime
 
@@ -576,15 +577,10 @@ async def system_scan_endpoint(scan_type: str):
                     lower_file = file.lower()
                     is_threat = False
                     
-                    # Pattern Match: Explicit User Test Cases & High-Risk Strings
-                    suspicious_keywords = ["ransomware", "mimikatz", "invoice_urgent", "inboice_urgent", "hack", "exploit", "payload", "virus", "trojan"]
+                    # Pattern Match: Only flag files with genuinely suspicious keywords
+                    suspicious_keywords = ["ransomware", "mimikatz", "invoice_urgent", "inboice_urgent", "hack", "exploit", "payload", "virus", "trojan", "malware", "keylogger", "backdoor"]
                     
                     if any(kw in lower_file for kw in suspicious_keywords):
-                        is_threat = True
-                    elif lower_file == "test.txt":
-                        is_threat = True
-                    elif file.endswith((".exe", ".dll", ".sys", ".ps1", ".bat", ".vbs")) and random.random() < 0.01:
-                        # Keep a tiny 1% random anomaly detection solely for system files if no keywords match
                         is_threat = True
                         
                     if is_threat:
@@ -601,3 +597,49 @@ async def system_scan_endpoint(scan_type: str):
         yield f"data: {{\"file\": \"COMPLETE\", \"progress\": 100, \"threats\": {threats_found}, \"infected\": {payload}}} \n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ─── File Delete / Quarantine Endpoints ───────────────────────────────────────
+QUARANTINE_DIR = os.path.join(os.path.expanduser("~"), ".phantomshield_quarantine")
+
+class FileActionPayload(BaseModel):
+    files: List[str]
+
+@app.post("/delete/files")
+async def delete_files(payload: FileActionPayload):
+    """Permanently delete a list of files from the local filesystem."""
+    deleted = []
+    failed = []
+    for filepath in payload.files:
+        # Unescape the double-escaped backslashes from the SSE stream
+        clean_path = filepath.replace("\\\\", "\\")
+        try:
+            if os.path.isfile(clean_path):
+                os.remove(clean_path)
+                deleted.append(clean_path)
+                print(f"[DELETE] Removed: {clean_path}")
+            else:
+                failed.append({"file": clean_path, "reason": "File not found"})
+        except Exception as e:
+            failed.append({"file": clean_path, "reason": str(e)})
+    return {"deleted": len(deleted), "failed": len(failed), "details": {"deleted": deleted, "failed": failed}}
+
+@app.post("/quarantine/files")
+async def quarantine_files(payload: FileActionPayload):
+    """Move files to the quarantine directory."""
+    os.makedirs(QUARANTINE_DIR, exist_ok=True)
+    quarantined = []
+    failed = []
+    for filepath in payload.files:
+        clean_path = filepath.replace("\\\\", "\\")
+        try:
+            if os.path.isfile(clean_path):
+                dest = os.path.join(QUARANTINE_DIR, os.path.basename(clean_path))
+                shutil.move(clean_path, dest)
+                quarantined.append({"from": clean_path, "to": dest})
+                print(f"[QUARANTINE] Moved: {clean_path} → {dest}")
+            else:
+                failed.append({"file": clean_path, "reason": "File not found"})
+        except Exception as e:
+            failed.append({"file": clean_path, "reason": str(e)})
+    return {"quarantined": len(quarantined), "failed": len(failed), "details": {"quarantined": quarantined, "failed": failed}}

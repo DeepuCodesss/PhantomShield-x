@@ -252,32 +252,97 @@ async def send_apps(client: httpx.AsyncClient, server: str, device_id: str):
     except Exception as e:
         print(f"[!] Could not send apps: {e}")
 
+def _show_scan_notification(title: str, message: str, color: str = "#4D8AF0"):
+    """Shows a small Tkinter popup notification for the agent tray."""
+    def _show():
+        try:
+            popup = tk.Tk()
+            popup.title("PhantomShield X")
+            popup.geometry("380x120+50+50")
+            popup.configure(bg="#0a0a0b")
+            popup.resizable(False, False)
+            popup.overrideredirect(True)  # Frameless window
+            popup.attributes('-topmost', True)
+            
+            # Position at bottom-right of screen
+            screen_w = popup.winfo_screenwidth()
+            screen_h = popup.winfo_screenheight()
+            popup.geometry(f"380x120+{screen_w - 400}+{screen_h - 170}")
+            
+            frame = tk.Frame(popup, bg="#111", bd=2, relief="solid", highlightbackground=color, highlightthickness=2)
+            frame.pack(fill="both", expand=True)
+            
+            tk.Label(frame, text=title, font=("Segoe UI", 12, "bold"), fg=color, bg="#111").pack(pady=(12, 2))
+            tk.Label(frame, text=message, font=("Segoe UI", 9), fg="#ccc", bg="#111", wraplength=340).pack(pady=(0, 5))
+            
+            popup.after(5000, popup.destroy)  # Auto-close after 5 seconds
+            popup.mainloop()
+        except Exception:
+            pass
+    threading.Thread(target=_show, daemon=True).start()
+
 async def run_remote_scan(client: httpx.AsyncClient, server: str, device_id: str):
     """Executes a targeted file scan on the user's system triggered by the Admin."""
     print("[!] REMOTE SCAN TRIGGERED BY ADMIN")
-    threats = []
     
-    # Target high-risk directories for the hackathon context
+    # Show notification to user that scan is starting
+    _show_scan_notification(
+        "⚠ Security Scan In Progress",
+        "PhantomShield X is performing a full system scan triggered by your admin.",
+        "#f59e0b"
+    )
+    
+    threats = []
+    scanned_count = 0
+    
+    # Target important directories
     target_dirs = [
         os.path.join(os.path.expanduser("~"), "Desktop"),
-        os.path.join(os.path.expanduser("~"), "Downloads")
+        os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop"),
+        os.path.join(os.path.expanduser("~"), "Downloads"),
+        os.path.join(os.path.expanduser("~"), "Documents"),
     ]
     
-    known_malware = ["ransomware_trigger.txt", "mimikatz_dump.txt"]
+    # Full heuristic keyword list — same as active_protection_monitor
+    malicious_keywords = ["virus", "malware", "ransomware", "trojan", "mimikatz", 
+                          "hack", "exploit", "payload", "keylogger", "backdoor"]
+    
+    # Also flag suspicious extensions in user directories
+    suspicious_extensions = [".exe", ".bat", ".ps1", ".vbs", ".cmd", ".scr"]
     
     for target in target_dirs:
         if not os.path.exists(target): continue
         for root, _, files in os.walk(target):
             for file in files:
-                if file in known_malware:
-                    filepath = os.path.join(root, file)
+                scanned_count += 1
+                file_lower = file.lower()
+                filepath = os.path.join(root, file)
+                
+                is_threat = False
+                threat_desc = ""
+                
+                # Check for malicious keywords in filename
+                for kw in malicious_keywords:
+                    if kw in file_lower:
+                        is_threat = True
+                        threat_desc = f"Malicious keyword '{kw}' detected in filename during remote scan."
+                        break
+                
+                # Check for suspicious executables in user folders (Desktop/Downloads only)
+                if not is_threat and any(file_lower.endswith(ext) for ext in suspicious_extensions):
+                    # Only flag .exe etc in Desktop/Downloads, not system dirs
+                    if "Desktop" in root or "Downloads" in root:
+                        is_threat = True
+                        threat_desc = f"Suspicious executable found in user directory: {file}"
+                
+                if is_threat:
                     threats.append({
                         "name": file,
                         "file_path": filepath,
                         "severity": "critical",
-                        "description": "Known malicious artifact detected during remote scan."
+                        "description": threat_desc
                     })
-                    print(f"  [X] FOUND THREAT: {file}")
+                    print(f"  [X] FOUND THREAT: {file} → {filepath}")
                     
     if threats:
         try:
@@ -289,8 +354,20 @@ async def run_remote_scan(client: httpx.AsyncClient, server: str, device_id: str
             print(f"[+] Reported {len(threats)} threats to central server")
         except Exception as e:
             print(f"[!] Failed to report threats: {e}")
+        
+        # Show threat notification
+        _show_scan_notification(
+            f"🚨 {len(threats)} Threat(s) Found!",
+            f"Scanned {scanned_count} files. {len(threats)} malicious file(s) detected and reported to admin.",
+            "#ef4444"
+        )
     else:
-        print("[+] Scan complete. No threats found.")
+        print(f"[+] Scan complete. {scanned_count} files scanned. No threats found.")
+        _show_scan_notification(
+            "✅ Scan Complete — System Clean",
+            f"Scanned {scanned_count} files across your system. No threats detected.",
+            "#10b981"
+        )
 
 async def poll_commands(client: httpx.AsyncClient, server: str, device_id: str):
     """Continuously poll for C2 commands from the admin dashboard."""
