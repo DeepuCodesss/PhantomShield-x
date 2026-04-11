@@ -4,12 +4,11 @@ Run this on any device you want to monitor.
 It collects real system data and reports to the central PhantomShield backend.
 
 Usage:
-    pip install psutil httpx
+    pip install psutil httpx pynput pystray pillow
     python agent.py --server http://YOUR_BACKEND_URL:8000
 """
 
 import asyncio
-import psutil
 import platform
 import socket
 import os
@@ -20,49 +19,148 @@ import time
 import argparse
 import subprocess
 import threading
-import tkinter as tk
-import webbrowser
+import traceback
+import logging
 from datetime import datetime
 
+# ─── Crash-safe logging ───────────────────────────────────────────────────────
+log_dir = os.path.join(os.path.expanduser("~"), ".phantomshield")
+try:
+    os.makedirs(log_dir, exist_ok=True)
+except Exception:
+    pass
+
+try:
+    logging.basicConfig(
+        filename=os.path.join(log_dir, "agent.log"),
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+except Exception:
+    logging.basicConfig(level=logging.WARNING)
+
+# ─── Safe Imports — ALL optional with fallbacks ──────────────────────────────
+import psutil
+import httpx
+
+# pynput — may fail on some locked-down Windows machines
+_HAS_PYNPUT = False
+try:
+    from pynput import keyboard, mouse
+    _HAS_PYNPUT = True
+except Exception:
+    logging.warning("pynput not available — input tracking disabled")
+
+# pystray + PIL — may fail if DLLs are missing
+_HAS_TRAY = False
 try:
     import pystray
     from PIL import Image, ImageDraw
-except ImportError:
-    print("[!] pystray/Pillow not found. Installing...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "pystray", "pillow"])
-    import pystray
-    from PIL import Image, ImageDraw
+    _HAS_TRAY = True
+except Exception:
+    logging.warning("pystray/PIL not available — running in headless mode")
 
-try:
-    import httpx
-    from pynput import keyboard, mouse
-except ImportError:
-    print("[!] httpx or pynput not found. Installing...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "httpx", "psutil", "pynput"])
-    import httpx
-    from pynput import keyboard, mouse
+default_icon = None
 
-# ─── Behavioral Tracking Variables ────────────────────────────────────────────
+def show_tray_notification(title, message):
+    """Sends a native Windows system tray notification silently."""
+    global default_icon
+    if default_icon and getattr(default_icon, 'notify', None):
+        try:
+            default_icon.notify(message, title)
+        except Exception as e:
+            logging.warning(f"Tray notification failed: {e}")
+
+# ─── Behavioral Tracking Variables (Thread-Safe) ─────────────────────────────
+_counter_lock = threading.Lock()
 KEY_PRESS_COUNT = 0
 MOUSE_MOVE_COUNT = 0
 ANOMALOUS_COUNT = 0
 
+# Throttle BOTH keyboard and mouse to prevent overwhelming the GIL
+_KEY_THROTTLE_MS = 10     # min ms between counted key events (~100 KPS max)
+_MOUSE_THROTTLE_MS = 100  # min ms between counted mouse events (10/sec)
+_last_key_time = 0
+_last_mouse_time = 0
+
 def on_press(key):
-    global KEY_PRESS_COUNT
-    KEY_PRESS_COUNT += 1
+    """Throttled keyboard handler — prevents CPU flooding from auto-repeat keys."""
+    global KEY_PRESS_COUNT, _last_key_time
+    try:
+        now = time.monotonic_ns() // 1_000_000
+        if now - _last_key_time >= _KEY_THROTTLE_MS:
+            with _counter_lock:
+                KEY_PRESS_COUNT += 1
+            _last_key_time = now
+    except Exception:
+        pass  # NEVER crash from a listener callback
 
 def on_move(x, y):
-    global MOUSE_MOVE_COUNT
-    MOUSE_MOVE_COUNT += 1
+    """Throttled mouse move handler — prevents CPU flooding from raw mouse events."""
+    global MOUSE_MOVE_COUNT, _last_mouse_time
+    try:
+        now = time.monotonic_ns() // 1_000_000
+        if now - _last_mouse_time >= _MOUSE_THROTTLE_MS:
+            with _counter_lock:
+                MOUSE_MOVE_COUNT += 1
+            _last_mouse_time = now
+    except Exception:
+        pass  # NEVER crash from a listener callback
+
+# ─── Resilient Input Listener Management ─────────────────────────────────────
+_k_listener = None
+_m_listener = None
+
+def _start_keyboard_listener():
+    global _k_listener
+    if not _HAS_PYNPUT:
+        return
+    try:
+        _k_listener = keyboard.Listener(on_press=on_press, suppress=False)
+        _k_listener.daemon = True
+        _k_listener.start()
+        logging.info("Keyboard listener started.")
+    except Exception as e:
+        logging.warning(f"Keyboard listener failed: {e}")
+
+def _start_mouse_listener():
+    global _m_listener
+    if not _HAS_PYNPUT:
+        return
+    try:
+        _m_listener = mouse.Listener(on_move=on_move, suppress=False)
+        _m_listener.daemon = True
+        _m_listener.start()
+        logging.info("Mouse listener started.")
+    except Exception as e:
+        logging.warning(f"Mouse listener failed: {e}")
 
 def start_input_listeners():
-    k_listener = keyboard.Listener(on_press=on_press)
-    k_listener.daemon = True
-    k_listener.start()
-    
-    m_listener = mouse.Listener(on_move=on_move)
-    m_listener.daemon = True
-    m_listener.start()
+    """Start input listeners with a watchdog that restarts them if they die."""
+    if not _HAS_PYNPUT:
+        logging.info("Skipping input listeners (pynput not available)")
+        return
+
+    _start_keyboard_listener()
+    _start_mouse_listener()
+
+    def _watchdog():
+        """Periodically checks that listeners are still alive and restarts them."""
+        global _k_listener, _m_listener
+        while True:
+            time.sleep(30)
+            try:
+                if _k_listener and not _k_listener.is_alive():
+                    logging.warning("Keyboard listener died — restarting")
+                    _start_keyboard_listener()
+                if _m_listener and not _m_listener.is_alive():
+                    logging.warning("Mouse listener died — restarting")
+                    _start_mouse_listener()
+            except Exception:
+                pass
+
+    wd = threading.Thread(target=_watchdog, daemon=True, name="InputWatchdog")
+    wd.start()
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 DEFAULT_SERVER = "https://phantomshield-x.onrender.com"
@@ -72,12 +170,18 @@ DEVICE_ID_FILE = os.path.join(os.path.expanduser("~"), ".phantomshield_device_id
 # ─── Device Identity ──────────────────────────────────────────────────────────
 def get_or_create_device_id() -> str:
     """Persistent device ID stored in home directory."""
-    if os.path.exists(DEVICE_ID_FILE):
-        with open(DEVICE_ID_FILE, "r") as f:
-            return f.read().strip()
+    try:
+        if os.path.exists(DEVICE_ID_FILE):
+            with open(DEVICE_ID_FILE, "r") as f:
+                return f.read().strip()
+    except Exception:
+        pass
     device_id = str(uuid.uuid4())
-    with open(DEVICE_ID_FILE, "w") as f:
-        f.write(device_id)
+    try:
+        with open(DEVICE_ID_FILE, "w") as f:
+            f.write(device_id)
+    except Exception:
+        pass
     return device_id
 
 
@@ -155,18 +259,21 @@ def get_installed_apps():
 def get_running_processes():
     """Top 20 most CPU-intensive processes."""
     procs = []
-    for p in sorted(psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent', 'status']),
-                    key=lambda p: p.info.get('cpu_percent') or 0, reverse=True)[:20]:
-        try:
-            procs.append({
-                "pid": p.info["pid"],
-                "name": p.info["name"],
-                "cpu": round(p.info.get("cpu_percent") or 0, 1),
-                "ram": round(p.info.get("memory_percent") or 0, 1),
-                "status": p.info.get("status", ""),
-            })
-        except Exception:
-            continue
+    try:
+        for p in sorted(psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent', 'status']),
+                        key=lambda p: p.info.get('cpu_percent') or 0, reverse=True)[:20]:
+            try:
+                procs.append({
+                    "pid": p.info["pid"],
+                    "name": p.info["name"],
+                    "cpu": round(p.info.get("cpu_percent") or 0, 1),
+                    "ram": round(p.info.get("memory_percent") or 0, 1),
+                    "status": p.info.get("status", ""),
+                })
+            except Exception:
+                continue
+    except Exception:
+        pass
     return procs
 
 
@@ -222,37 +329,26 @@ def collect_telemetry(device_id: str) -> dict:
     try: cpu_freq = round(psutil.cpu_freq().current, 1) if psutil.cpu_freq() else 0
     except Exception: pass
 
-    # Compute Behavioral Analytics
+    # Compute Behavioral Analytics (thread-safe read-and-reset)
     global KEY_PRESS_COUNT, MOUSE_MOVE_COUNT, ANOMALOUS_COUNT
-    # Since interval is HEARTBEAT_INTERVAL (5s), multiply by 12 to get Per Minute estimates.
-    kpm = KEY_PRESS_COUNT * 12
-    cpm = MOUSE_MOVE_COUNT * 12
-    
-    # Reset accumulators for next interval
-    KEY_PRESS_COUNT = 0
-    MOUSE_MOVE_COUNT = 0
+    with _counter_lock:
+        kpm = KEY_PRESS_COUNT * 12  # 5s interval → per-minute
+        cpm = MOUSE_MOVE_COUNT * 12
+        KEY_PRESS_COUNT = 0
+        MOUSE_MOVE_COUNT = 0
     
     is_anomalous = False
     
-    # Anomalous heuristic: Normal users rarely exceed 800 KPM (approx 160 WPM max) or erratic huge mouse events consistently.
-    if kpm > 800 or cpm > 10000:
+    # Anomalous heuristic: Normal users rarely exceed 500 KPM (~100 WPM max)
+    if kpm > 500 or cpm > 8000:
         ANOMALOUS_COUNT += 1
     else:
-        # Slowly decay the anomalous count if they start acting normal
         ANOMALOUS_COUNT = max(0, ANOMALOUS_COUNT - 1)
 
-    if ANOMALOUS_COUNT >= 3: # 15 seconds of sustained superhuman speed
+    if ANOMALOUS_COUNT >= 2:  # 10 seconds of sustained superhuman speed
         is_anomalous = True
-        try:
-            # Only pop up warning occasionally to avoid freezing the screen
-            if ANOMALOUS_COUNT % 4 == 0:
-                _show_scan_notification(
-                    "Behavior Anomaly Detected",
-                    "Unusual typing speed or automated activity detected. Your session implies Bot/Script behavior.",
-                    "#ef4444"
-                )
-        except:
-            pass
+        # NO POPUPS — just log it silently and report to server
+        logging.info(f"Anomaly detected: KPM={kpm}, CPM={cpm}")
 
     return {
         "device_id": device_id,
@@ -307,15 +403,11 @@ async def register_device(client: httpx.AsyncClient, server: str, device_id: str
     try:
         response = await client.post(f"{server}/agent/register", json=info, timeout=10)
         if response.status_code == 200:
-            print(f"[+] Registered with PhantomShield server: {server}")
-            print(f"    Device ID: {device_id}")
-            print(f"    Hostname:  {info['hostname']}")
-            print(f"    IP:        {info['ip']}")
-            print(f"    OS:        {info['os']}")
+            logging.info(f"Registered with server: {server} | Device: {device_id}")
         else:
-            print(f"[!] Registration failed: {response.status_code}")
+            logging.warning(f"Registration failed: {response.status_code}")
     except Exception as e:
-        print(f"[!] Could not reach server: {e}")
+        logging.warning(f"Could not reach server: {e}")
 
 
 async def send_heartbeat(client: httpx.AsyncClient, server: str, device_id: str):
@@ -323,16 +415,14 @@ async def send_heartbeat(client: httpx.AsyncClient, server: str, device_id: str)
     try:
         telemetry = collect_telemetry(device_id)
         await client.post(f"{server}/agent/heartbeat", json=telemetry, timeout=5)
-    except Exception as e:
-        print(f"Heartbeat collect/send error: {e}")
+    except Exception:
         pass  # Silently retry on next tick
 
 
 async def send_apps(client: httpx.AsyncClient, server: str, device_id: str):
     """Send installed apps list (expensive, do once on startup)."""
-    print("[~] Scanning installed applications...")
     apps = get_installed_apps()
-    print(f"[+] Found {len(apps)} installed applications.")
+    logging.info(f"Found {len(apps)} installed apps")
     try:
         await client.post(
             f"{server}/agent/apps",
@@ -340,109 +430,74 @@ async def send_apps(client: httpx.AsyncClient, server: str, device_id: str):
             timeout=30,
         )
     except Exception as e:
-        print(f"[!] Could not send apps: {e}")
+        logging.warning(f"Could not send apps: {e}")
 
-def _show_scan_notification(title: str, message: str, color: str = "#4D8AF0"):
-    """Shows a small Tkinter popup notification for the agent tray."""
-    def _show():
-        try:
-            popup = tk.Tk()
-            popup.title("PhantomShield X")
-            popup.geometry("380x120+50+50")
-            popup.configure(bg="#0a0a0b")
-            popup.resizable(False, False)
-            popup.overrideredirect(True)  # Frameless window
-            popup.attributes('-topmost', True)
-            
-            # Position at bottom-right of screen
-            screen_w = popup.winfo_screenwidth()
-            screen_h = popup.winfo_screenheight()
-            popup.geometry(f"380x120+{screen_w - 400}+{screen_h - 170}")
-            
-            frame = tk.Frame(popup, bg="#111", bd=2, relief="solid", highlightbackground=color, highlightthickness=2)
-            frame.pack(fill="both", expand=True)
-            
-            tk.Label(frame, text=title, font=("Segoe UI", 12, "bold"), fg=color, bg="#111").pack(pady=(12, 2))
-            tk.Label(frame, text=message, font=("Segoe UI", 9), fg="#ccc", bg="#111", wraplength=340).pack(pady=(0, 5))
-            
-            popup.after(5000, popup.destroy)  # Auto-close after 5 seconds
-            popup.mainloop()
-        except Exception:
-            pass
-    threading.Thread(target=_show, daemon=True).start()
 
 async def run_remote_scan(client: httpx.AsyncClient, server: str, device_id: str):
-    """Executes a targeted file scan on the user's system triggered by the Admin."""
-    print("[!] REMOTE SCAN TRIGGERED BY ADMIN")
+    """Executes a targeted file scan on the user's system triggered by the Admin.
     
-    # Show notification to user that scan is starting
-    _show_scan_notification(
-        "⚠ Security Scan In Progress",
-        "PhantomShield X is performing a full system scan triggered by your admin.",
-        "#f59e0b"
-    )
+    This runs SILENTLY — no popups, no notifications to the user.
+    All results are reported back to the admin dashboard only.
+    """
+    logging.info("Remote scan triggered by admin")
     
     threats = []
     scanned_count = 0
     
-    # Target important directories — but NOT deep into project/node_modules folders
     target_dirs = [
         os.path.join(os.path.expanduser("~"), "Desktop"),
         os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop"),
         os.path.join(os.path.expanduser("~"), "Downloads"),
     ]
     
-    # Only flag files whose name clearly indicates malware intent (exact pattern matching)
     malware_filenames = [
         "ransomware_trigger", "mimikatz_dump", "trojan_payload",
         "keylogger", "backdoor", "exploit_kit",
     ]
     
-    # Also flag if the ENTIRE filename (without extension) is one of these standalone keywords
     standalone_keywords = ["virus", "malware", "ransomware", "trojan", "mimikatz", 
                            "exploit", "payload", "keylogger", "backdoor", "hack"]
     
-    # Skip these directories (dev tools, not threats)
     skip_dirs = {"node_modules", ".git", "__pycache__", "venv", ".venv", "env", 
                  ".next", "dist", "build", ".cache", ".npm"}
     
     for target in target_dirs:
         if not os.path.exists(target): continue
-        for root, dirs, files in os.walk(target):
-            # Skip dev/system directories
-            dirs[:] = [d for d in dirs if d not in skip_dirs]
-            
-            for file in files:
-                scanned_count += 1
-                file_lower = file.lower()
-                filepath = os.path.join(root, file)
+        try:
+            for root, dirs, files in os.walk(target):
+                dirs[:] = [d for d in dirs if d not in skip_dirs]
                 
-                is_threat = False
-                threat_desc = ""
-                
-                # Get filename without extension for matching
-                name_no_ext = os.path.splitext(file_lower)[0]
-                
-                # Check 1: Does the filename match a known malware pattern?
-                for pattern in malware_filenames:
-                    if pattern in name_no_ext:
+                for file in files:
+                    scanned_count += 1
+                    file_lower = file.lower()
+                    filepath = os.path.join(root, file)
+                    
+                    is_threat = False
+                    threat_desc = ""
+                    
+                    name_no_ext = os.path.splitext(file_lower)[0]
+                    
+                    for pattern in malware_filenames:
+                        if pattern in name_no_ext:
+                            is_threat = True
+                            threat_desc = f"Known malware artifact '{pattern}' detected in filename."
+                            break
+                    
+                    if not is_threat and name_no_ext in standalone_keywords:
                         is_threat = True
-                        threat_desc = f"Known malware artifact '{pattern}' detected in filename."
-                        break
-                
-                # Check 2: Is the entire filename (without ext) a standalone malware keyword?
-                if not is_threat and name_no_ext in standalone_keywords:
-                    is_threat = True
-                    threat_desc = f"File named '{file}' matches known malware signature."
-                
-                if is_threat:
-                    threats.append({
-                        "name": file,
-                        "file_path": filepath,
-                        "severity": "critical",
-                        "description": threat_desc
-                    })
-                    print(f"  [X] FOUND THREAT: {file} → {filepath}")
+                        threat_desc = f"File named '{file}' matches known malware signature."
+                    
+                    if is_threat:
+                        threats.append({
+                            "name": file,
+                            "file_path": filepath,
+                            "severity": "critical",
+                            "description": threat_desc
+                        })
+                        logging.info(f"Threat found: {file} at {filepath}")
+                        show_tray_notification("Threat Neutralized", f"Malicious file '{file}' removed.")
+        except Exception:
+            pass
                     
     if threats:
         try:
@@ -451,19 +506,12 @@ async def run_remote_scan(client: httpx.AsyncClient, server: str, device_id: str
                 json={"device_id": device_id, "threats": threats},
                 timeout=10
             )
-            print(f"[+] Reported {len(threats)} threats to central server")
+            logging.info(f"Reported {len(threats)} threats to server")
         except Exception as e:
-            print(f"[!] Failed to report threats: {e}")
-        
-        # Show threat notification
-        _show_scan_notification(
-            f"🚨 {len(threats)} Threat(s) Found!",
-            f"Scanned {scanned_count} files. {len(threats)} malicious file(s) detected and reported to admin.",
-            "#ef4444"
-        )
+            logging.warning(f"Failed to report threats: {e}")
     else:
-        print(f"[+] Scan complete. {scanned_count} files scanned. No threats found.")
-        # Report clean status to admin dashboard
+        logging.info(f"Scan complete: {scanned_count} files, no threats")
+        show_tray_notification("Scan Complete", f"System scanned ({scanned_count} files). No threats found.")
         try:
             clean_report = [{
                 "name": "SCAN_COMPLETE",
@@ -479,11 +527,6 @@ async def run_remote_scan(client: httpx.AsyncClient, server: str, device_id: str
             )
         except Exception:
             pass
-        _show_scan_notification(
-            "✅ Scan Complete — System Clean",
-            f"Scanned {scanned_count} files across your system. No threats detected.",
-            "#10b981"
-        )
 
 async def poll_commands(client: httpx.AsyncClient, server: str, device_id: str):
     """Continuously poll for C2 commands from the admin dashboard."""
@@ -497,12 +540,15 @@ async def poll_commands(client: httpx.AsyncClient, server: str, device_id: str):
                         asyncio.create_task(run_remote_scan(client, server, device_id))
         except Exception:
             pass
-        await asyncio.sleep(3) # Fast polling for demo purposes
+        await asyncio.sleep(3)
 
 
 async def active_protection_monitor(client: httpx.AsyncClient, server: str, device_id: str):
-    """Background scanner that actively deletes malware immediately upon creation."""
-    print("[+] Active Protection Module Online. Watching file system...")
+    """Background scanner that actively deletes malware immediately upon creation.
+    
+    Runs SILENTLY — no popups. Reports to admin dashboard only.
+    """
+    logging.info("Active Protection Module started")
     
     watch_dirs = [
         os.path.join(os.path.expanduser("~"), "Desktop"),
@@ -513,7 +559,6 @@ async def active_protection_monitor(client: httpx.AsyncClient, server: str, devi
     malicious_keywords = ["virus", "malware", "ransomware", "trojan", "mimikatz",
                           "hack", "exploit", "payload", "keylogger", "backdoor"]
     
-    # Whitelist: legit files that contain keywords but aren't threats
     whitelist = ["virustotal", "antivirus", "hackathon", "explorerframe"]
     
     seen_files = {}
@@ -538,17 +583,14 @@ async def active_protection_monitor(client: httpx.AsyncClient, server: str, devi
                 
                 for file in new_files:
                     file_lower = file.lower()
-                    # Skip whitelisted filenames
                     if any(wl in file_lower for wl in whitelist):
                         continue
                     if any(word in file_lower for word in malicious_keywords):
                         filepath = os.path.join(d, file)
                         try:
-                            # INSTANTLY DELETE
                             if os.path.isfile(filepath):
                                 os.remove(filepath) 
-                                print(f"  [!!!] ACTIVE PROTECTION: DELETED {file} from {d}")
-                                # Report to dashboard
+                                logging.info(f"ACTIVE PROTECTION: Deleted {file} from {d}")
                                 threats = [{
                                     "name": file,
                                     "file_path": filepath,
@@ -556,25 +598,31 @@ async def active_protection_monitor(client: httpx.AsyncClient, server: str, devi
                                     "status": "deleted",
                                     "description": "Malware automatically neutralized by Active Protection Engine."
                                 }]
-                                await client.post(
-                                    f"{server}/agent/threats",
-                                    json={"device_id": device_id, "threats": threats},
-                                    timeout=5
-                                )
-                                current_files.remove(file)
+                                try:
+                                    await client.post(
+                                        f"{server}/agent/threats",
+                                        json={"device_id": device_id, "threats": threats},
+                                        timeout=5
+                                    )
+                                    show_tray_notification("Active Protection", f"Malware '{file}' blocked & removed.")
+                                except Exception:
+                                    pass
+                                current_files.discard(file)
                         except Exception as e:
-                            print(f"  [!] Failed to delete {file}: {e}")
+                            logging.warning(f"Failed to delete {file}: {e}")
                 seen_files[d] = current_files
         except Exception:
             pass
-        await asyncio.sleep(2) # Near real-time monitoring
+        await asyncio.sleep(2)
 
 async def usb_monitor(client: httpx.AsyncClient, server: str, device_id: str):
-    """Watches for new USB drives and automatically scans them."""
-    print("[+] USB Monitor Online. Watching for removable drives...")
+    """Watches for new USB drives and automatically scans them.
+    
+    Runs SILENTLY — no popups. Reports to admin dashboard only.
+    """
+    logging.info("USB Monitor started")
     known_drives = set()
     
-    # Init known drives
     try:
         for ptr in psutil.disk_partitions():
             known_drives.add(ptr.device)
@@ -591,16 +639,9 @@ async def usb_monitor(client: httpx.AsyncClient, server: str, device_id: str):
                 
             new_drives = current_drives - known_drives
             for drive in new_drives:
-                print(f"[!] New Drive Detected: {drive}")
+                logging.info(f"New drive detected: {drive}")
                 
-                # Show user notification about USB detection
-                _show_scan_notification(
-                    "\ud83d\udd0c USB Drive Detected",
-                    f"New drive {drive} connected. PhantomShield is scanning for threats...",
-                    "#4D8AF0"
-                )
-                
-                # Report USB insertion to admin dashboard
+                # Report USB insertion to admin dashboard (silently)
                 try:
                     usb_alert = [{
                         "name": f"USB_CONNECTED: {drive}",
@@ -614,33 +655,38 @@ async def usb_monitor(client: httpx.AsyncClient, server: str, device_id: str):
                         json={"device_id": device_id, "threats": usb_alert},
                         timeout=10
                     )
+                    show_tray_notification("USB Scanning", f"Scanning drive {drive} for threats...")
                 except Exception:
                     pass
                 
                 # Scan the USB drive
                 threats = []
                 scanned = 0
-                for root, _, files in os.walk(drive):
-                    for file in files:
-                        scanned += 1
-                        file_lower = file.lower()
-                        # Check for malicious keywords
-                        if any(kw in file_lower for kw in malicious_keywords):
-                            filepath = os.path.join(root, file)
-                            try:
-                                if os.path.isfile(filepath):
-                                    os.remove(filepath)
-                                    threats.append({
-                                        "name": file,
-                                        "file_path": filepath,
-                                        "severity": "critical",
-                                        "status": "deleted",
-                                        "description": f"USB malware '{file}' auto-deleted from {drive}"
-                                    })
-                                    print(f"  [X] USB THREAT DELETED: {file}")
-                            except Exception:
-                                pass
+                try:
+                    for root, _, files in os.walk(drive):
+                        for file in files:
+                            scanned += 1
+                            file_lower = file.lower()
+                            if any(kw in file_lower for kw in malicious_keywords):
+                                filepath = os.path.join(root, file)
+                                try:
+                                    if os.path.isfile(filepath):
+                                        os.remove(filepath)
+                                        threats.append({
+                                            "name": file,
+                                            "file_path": filepath,
+                                            "severity": "critical",
+                                            "status": "deleted",
+                                            "description": f"USB malware '{file}' auto-deleted from {drive}"
+                                        })
+                                        logging.info(f"USB threat deleted: {file}")
+                                        show_tray_notification("USB Threat Cleaned", f"Removed '{file}' from {drive}")
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
                 
+                # Report results to admin (silently)
                 if threats:
                     try:
                         await client.post(
@@ -650,13 +696,7 @@ async def usb_monitor(client: httpx.AsyncClient, server: str, device_id: str):
                         )
                     except Exception:
                         pass
-                    _show_scan_notification(
-                        f"\ud83d\udea8 USB: {len(threats)} Threat(s) Deleted!",
-                        f"Scanned {scanned} files on {drive}. {len(threats)} malware file(s) auto-deleted.",
-                        "#ef4444"
-                    )
                 else:
-                    # Report clean USB to admin
                     try:
                         clean_usb = [{
                             "name": f"USB_CLEAN: {drive}",
@@ -670,13 +710,9 @@ async def usb_monitor(client: httpx.AsyncClient, server: str, device_id: str):
                             json={"device_id": device_id, "threats": clean_usb},
                             timeout=10
                         )
+                        show_tray_notification("USB Clean", f"Drive {drive} securely scanned. No threats.")
                     except Exception:
                         pass
-                    _show_scan_notification(
-                        "\u2705 USB Drive Clean",
-                        f"Scanned {scanned} files on {drive}. No threats found.",
-                        "#10b981"
-                    )
                         
             known_drives = current_drives
         except Exception:
@@ -685,20 +721,32 @@ async def usb_monitor(client: httpx.AsyncClient, server: str, device_id: str):
 
 async def main(server: str):
     device_id = get_or_create_device_id()
-    psutil.cpu_percent(interval=None)  # Prime the CPU meter
+
+    # Prime the CPU meter
+    try:
+        psutil.cpu_percent(interval=None)
+    except Exception:
+        pass
+
+    # Generous startup delay — lets PyInstaller unpack and AV finish scanning
+    await asyncio.sleep(2)
 
     # Fire up the low-level telemetry trackers
     start_input_listeners()
 
-    print("=" * 55)
-    print("  PhantomShield X — Device Agent")
-    print("=" * 55)
+    logging.info("PhantomShield X Agent started")
 
-    async with httpx.AsyncClient() as client:
+    # Use connection pooling with limits to prevent socket exhaustion
+    transport = httpx.AsyncHTTPTransport(
+        retries=2,
+        limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+    )
+    async with httpx.AsyncClient(transport=transport, timeout=10) as client:
         # Register with server
         await register_device(client, server, device_id)
 
-        # Send apps list in background
+        # Send apps list in background (delay to let startup stabilize)
+        await asyncio.sleep(3)
         asyncio.create_task(send_apps(client, server, device_id))
 
         # Start C2 command polling
@@ -711,9 +759,12 @@ async def main(server: str):
         asyncio.create_task(usb_monitor(client, server, device_id))
 
         # Heartbeat loop
-        print(f"[~] Sending telemetry every {HEARTBEAT_INTERVAL}s. Press Ctrl+C to stop.\n")
+        logging.info(f"Heartbeat active (every {HEARTBEAT_INTERVAL}s)")
         while True:
-            await send_heartbeat(client, server, device_id)
+            try:
+                await send_heartbeat(client, server, device_id)
+            except Exception as e:
+                logging.warning(f"Heartbeat error: {e}")
             await asyncio.sleep(HEARTBEAT_INTERVAL)
 
 
@@ -724,7 +775,6 @@ def create_image():
     color = (20, 20, 20)
     image = Image.new('RGB', (width, height), color)
     draw = ImageDraw.Draw(image)
-    # Draw simple shield outline
     draw.polygon([(32, 5), (55, 15), (55, 45), (32, 60), (9, 45), (9, 15)], fill=(77, 138, 240))
     return image
 
@@ -734,93 +784,109 @@ def set_autorun():
         try:
             import winreg
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
-            # Find exact path if running as pyinstaller executable, else python path
             if getattr(sys, 'frozen', False):
                 exe_path = sys.executable
             else:
                 exe_path = f'"{sys.executable}" "{os.path.abspath(__file__)}"'
             winreg.SetValueEx(key, "PhantomShieldAgent", 0, winreg.REG_SZ, exe_path)
             winreg.CloseKey(key)
+            logging.info("Autorun set successfully")
         except Exception as e:
-            print(f"[!] Failed to set autorun: {e}")
+            logging.warning(f"Failed to set autorun: {e}")
 
 def run_background_loop(server):
-    try:
-        asyncio.run(main(server))
-    except Exception as e:
-        print(f"Background network loop crashed: {e}")
+    """Crash-resilient event loop — restarts automatically on failure."""
+    max_retries = 10
+    retry_delay = 5
+    for attempt in range(1, max_retries + 1):
+        try:
+            asyncio.run(main(server))
+            break
+        except Exception as e:
+            msg = f"Background loop crashed (attempt {attempt}/{max_retries}): {e}"
+            logging.error(msg)
+            logging.error(traceback.format_exc())
+            if attempt < max_retries:
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 60)
+            else:
+                logging.critical("Agent gave up after max retries.")
 
 def open_ui():
-    """Builds a local Tkinter UI for the background agent."""
-    device_id = get_or_create_device_id()
-    root = tk.Tk()
-    root.title("PhantomShield X Agent")
-    root.geometry("400x500")
-    root.configure(bg="#0a0a0b")
-    root.resizable(False, False)
-    
-    # Try putting the window above others
+    """Opens the web dashboard."""
     try:
-        root.attributes('-topmost', 1)
-        root.after(1000, lambda: root.attributes('-topmost', 0))
-    except: pass
-    
-    label = tk.Label(root, text="🛡 PhantomShield X", font=("Segoe UI", 20, "bold"), fg="#4D8AF0", bg="#0a0a0b")
-    label.pack(pady=30)
-    
-    status_frame = tk.Frame(root, bg="#111", bd=1, relief="solid")
-    status_frame.pack(fill="x", padx=20, pady=10)
-    
-    tk.Label(status_frame, text="AGENT STATUS", font=("Segoe UI", 10), fg="#888", bg="#111").pack(pady=5)
-    tk.Label(status_frame, text="✅ PROTECTED", font=("Segoe UI", 16, "bold"), fg="#10b981", bg="#111").pack(pady=5)
-    
-    info_frame = tk.Frame(root, bg="#111", bd=1, relief="solid")
-    info_frame.pack(fill="x", padx=20, pady=10)
-    
-    tk.Label(info_frame, text=f"Device ID: {device_id[:12]}...", font=("Consolas", 10), fg="#ccc", bg="#111").pack(pady=5)
-    tk.Label(info_frame, text=f"Hostname: {socket.gethostname()}", font=("Consolas", 10), fg="#ccc", bg="#111").pack(pady=5)
-    tk.Label(info_frame, text=f"Engine: Active", font=("Consolas", 10), fg="#ccc", bg="#111").pack(pady=5)
-    
-    def open_dash():
-        webbrowser.open("https://phantom-shield-x.vercel.app/admin")
-        
-    btn = tk.Button(root, text="Open Web Dashboard", bg="#4D8AF0", fg="white", font=("Segoe UI", 12, "bold"), 
-                    activebackground="#3b72c9", activeforeground="white", command=open_dash, relief="flat", cursor="hand2")
-    btn.pack(pady=30, ipadx=10, ipady=5)
-    
-    # Prevent multiple windows by running mainloop
-    root.mainloop()
+        import webbrowser
+        webbrowser.open("https://phantom-shield-x.vercel.app/")
+    except Exception:
+        pass
 
 def on_ui_click(icon, item):
     """Spawns the UI securely without blocking the primary tray icon."""
     threading.Thread(target=open_ui, daemon=True).start()
 
+
 def setup_tray(server):
-    """Sets up the invisible system tray icon and branches network loop."""
-    print("[+] Initializing PhantomShield Agent in stealth tray mode...")
-    set_autorun()
+    """Sets up the system tray icon and branches network loop.
     
-    # Fire up the networking loop in a background thread so the UI loop isn't blocked
+    If tray icon fails (missing DLLs, etc.), falls back to headless mode.
+    """
+    logging.info("Initializing agent...")
+    
+    # Set autorun (best-effort, non-blocking)
+    try:
+        set_autorun()
+    except Exception:
+        pass
+    
+    # Fire up the networking loop in a background thread
     bg_thread = threading.Thread(target=run_background_loop, args=(server,), daemon=True)
     bg_thread.start()
     
-    # Setup icon
-    image = create_image()
+    # Try to set up tray icon — if it fails, run headlessly
+    if _HAS_TRAY:
+        try:
+            image = create_image()
+            
+            def on_quit(icon, item):
+                icon.stop()
+                os._exit(0)
+                
+            menu = pystray.Menu(
+                pystray.MenuItem('Open PhantomShield Dashboard', on_ui_click, default=True),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem('Exit Endpoint Agent', on_quit)
+            )
+            
+            icon = pystray.Icon("PhantomShield", image, "PhantomShield-X Agent", menu)
+            
+            global default_icon
+            default_icon = icon
+
+            logging.info("Tray icon initialized — running with UI")
+            icon.run()  # This blocks — keeps the process alive
+        except Exception as e:
+            logging.warning(f"Tray icon failed: {e}. Running headless.")
+            # Fall through to headless mode
     
-    def on_quit(icon, item):
-        icon.stop()
-        os._exit(0) # hard exit to kill background threads
-        
-    menu = pystray.Menu(
-        pystray.MenuItem('Open PhantomShield Dashboard', on_ui_click, default=True),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem('Exit Endpoint Agent', on_quit)
-    )
-    
-    icon = pystray.Icon("PhantomShield", image, "PhantomShield-X Agent", menu)
-    icon.run()
+    # Headless fallback — just keep the process alive
+    logging.info("Running in headless mode (no tray icon)")
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        pass
 
 if __name__ == "__main__":
+    # ─── Global crash handlers — NOTHING should kill the exe silently ─────
+    def _global_exception_handler(exc_type, exc_value, exc_tb):
+        msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        logging.critical(f"UNHANDLED EXCEPTION:\n{msg}")
+    sys.excepthook = _global_exception_handler
+
+    def _thread_exception_handler(args):
+        logging.critical(f"UNHANDLED THREAD EXCEPTION in {args.thread.name}: {args.exc_value}")
+    threading.excepthook = _thread_exception_handler
+
     parser = argparse.ArgumentParser(description="PhantomShield X Device Agent")
     parser.add_argument(
         "--server",
@@ -832,4 +898,12 @@ if __name__ == "__main__":
     try:
         setup_tray(args.server)
     except KeyboardInterrupt:
-        print("\n[+] Agent stopped.")
+        logging.info("Agent stopped by user")
+    except Exception as e:
+        logging.critical(f"Fatal startup error: {e}")
+        logging.critical(traceback.format_exc())
+        # In headless mode, try to keep running anyway
+        try:
+            run_background_loop(args.server)
+        except Exception:
+            pass

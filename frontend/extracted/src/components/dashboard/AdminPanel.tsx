@@ -112,11 +112,15 @@ const DeviceCard: React.FC<{ device: AgentDevice; onClick: () => void }> = ({ de
             </div>
           )}
 
-          {/* Footer Stats */}
+          {/* Footer Stats & Behavior */}
           <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-3 text-[10px] font-mono text-muted-foreground">
               <span><Package className="w-3 h-3 inline mr-1" />{device.apps_count} apps</span>
-              <span><Box className="w-3 h-3 inline mr-1" />{device.telemetry?.process_count ?? '--'} procs</span>
+              <span><Activity className="w-3 h-3 inline mr-1" />
+                {device.telemetry?.inputs?.anomalous 
+                  ? <span className="text-red-400 font-bold uppercase tracking-wider animate-pulse">Suspicious</span>
+                  : <span className="text-emerald-400 uppercase">Normal</span>}
+              </span>
             </div>
             <ChevronRight className="w-4 h-4 text-muted-foreground" />
           </div>
@@ -420,6 +424,7 @@ export const AdminPanel: React.FC = () => {
   const [online, setOnline] = useState(0);
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [activeTab, setActiveTab] = useState<'all' | 'normal' | 'observing'>('all');
 
   useEffect(() => {
     const fetchDevices = async () => {
@@ -513,6 +518,24 @@ export const AdminPanel: React.FC = () => {
         </CardContent>
       </Card>
 
+      {/* Device View Tabs */}
+      <div className="flex gap-2 border-b border-white/5 pb-3 pt-2">
+        {(['all', 'normal', 'observing'] as const).map(tabId => (
+          <button
+            key={tabId}
+            onClick={() => setActiveTab(tabId)}
+            className={cn(
+              "px-4 py-2 rounded-lg text-xs font-mono uppercase tracking-wider transition-all",
+              activeTab === tabId 
+                ? (tabId === 'observing' ? "bg-red-500/10 text-red-500 border border-red-500/30" : "bg-primary/10 text-primary border border-primary/20")
+                : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+            )}
+          >
+            {tabId === 'observing' ? 'Suspicious (Observing)' : tabId}
+          </button>
+        ))}
+      </div>
+
       {/* Device Grid */}
       {devices.length === 0 ? (
         <div className="text-center py-20 border border-dashed border-white/10 rounded-xl">
@@ -523,7 +546,13 @@ export const AdminPanel: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <AnimatePresence>
-            {devices.map(device => (
+            {devices.filter(d => {
+              if (activeTab === 'all') return true;
+              const isAnomalous = d.telemetry?.inputs?.anomalous === true;
+              if (activeTab === 'normal') return !isAnomalous;
+              if (activeTab === 'observing') return isAnomalous;
+              return true;
+            }).map(device => (
               <DeviceCard
                 key={device.device_id}
                 device={device}
