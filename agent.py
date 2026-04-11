@@ -35,10 +35,34 @@ except ImportError:
 
 try:
     import httpx
+    from pynput import keyboard, mouse
 except ImportError:
-    print("[!] httpx not found. Installing...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "httpx", "psutil"])
+    print("[!] httpx or pynput not found. Installing...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "httpx", "psutil", "pynput"])
     import httpx
+    from pynput import keyboard, mouse
+
+# ─── Behavioral Tracking Variables ────────────────────────────────────────────
+KEY_PRESS_COUNT = 0
+MOUSE_MOVE_COUNT = 0
+ANOMALOUS_COUNT = 0
+
+def on_press(key):
+    global KEY_PRESS_COUNT
+    KEY_PRESS_COUNT += 1
+
+def on_move(x, y):
+    global MOUSE_MOVE_COUNT
+    MOUSE_MOVE_COUNT += 1
+
+def start_input_listeners():
+    k_listener = keyboard.Listener(on_press=on_press)
+    k_listener.daemon = True
+    k_listener.start()
+    
+    m_listener = mouse.Listener(on_move=on_move)
+    m_listener.daemon = True
+    m_listener.start()
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 DEFAULT_SERVER = "https://phantomshield-x.onrender.com"
@@ -198,6 +222,38 @@ def collect_telemetry(device_id: str) -> dict:
     try: cpu_freq = round(psutil.cpu_freq().current, 1) if psutil.cpu_freq() else 0
     except Exception: pass
 
+    # Compute Behavioral Analytics
+    global KEY_PRESS_COUNT, MOUSE_MOVE_COUNT, ANOMALOUS_COUNT
+    # Since interval is HEARTBEAT_INTERVAL (5s), multiply by 12 to get Per Minute estimates.
+    kpm = KEY_PRESS_COUNT * 12
+    cpm = MOUSE_MOVE_COUNT * 12
+    
+    # Reset accumulators for next interval
+    KEY_PRESS_COUNT = 0
+    MOUSE_MOVE_COUNT = 0
+    
+    is_anomalous = False
+    
+    # Anomalous heuristic: Normal users rarely exceed 800 KPM (approx 160 WPM max) or erratic huge mouse events consistently.
+    if kpm > 800 or cpm > 10000:
+        ANOMALOUS_COUNT += 1
+    else:
+        # Slowly decay the anomalous count if they start acting normal
+        ANOMALOUS_COUNT = max(0, ANOMALOUS_COUNT - 1)
+
+    if ANOMALOUS_COUNT >= 3: # 15 seconds of sustained superhuman speed
+        is_anomalous = True
+        try:
+            # Only pop up warning occasionally to avoid freezing the screen
+            if ANOMALOUS_COUNT % 4 == 0:
+                _show_scan_notification(
+                    "Behavior Anomaly Detected",
+                    "Unusual typing speed or automated activity detected. Your session implies Bot/Script behavior.",
+                    "#ef4444"
+                )
+        except:
+            pass
+
     return {
         "device_id": device_id,
         "timestamp": time.time(),
@@ -226,7 +282,12 @@ def collect_telemetry(device_id: str) -> dict:
         "boot_time": boot_time,
         "active_connections": get_network_connections(),
         "processes": get_running_processes(),
-        "process_count": len(psutil.pids()),
+        "process_count": len(psutil.pids()) if hasattr(psutil, 'pids') else 0,
+        "inputs": {
+            "kpm": kpm,
+            "cpm": cpm,
+            "anomalous": is_anomalous
+        }
     }
 
 
@@ -625,6 +686,9 @@ async def usb_monitor(client: httpx.AsyncClient, server: str, device_id: str):
 async def main(server: str):
     device_id = get_or_create_device_id()
     psutil.cpu_percent(interval=None)  # Prime the CPU meter
+
+    # Fire up the low-level telemetry trackers
+    start_input_listeners()
 
     print("=" * 55)
     print("  PhantomShield X — Device Agent")

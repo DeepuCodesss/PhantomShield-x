@@ -63,6 +63,7 @@ class AgentHeartbeatPayload(BaseModel):
     active_connections: Optional[list] = []
     processes: Optional[list] = []
     process_count: Optional[int] = 0
+    inputs: Optional[dict] = {}
 
 class AgentAppsPayload(BaseModel):
     device_id: str

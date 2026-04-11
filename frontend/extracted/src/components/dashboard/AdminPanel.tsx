@@ -212,6 +212,44 @@ const DeviceDetailPanel: React.FC<{ deviceId: string; onClose: () => void }> = (
         </button>
       </div>
 
+      {/* Behavioral Analytics */}
+      {t?.inputs && (
+        <Card className={cn("border-t-4", t.inputs.anomalous ? "border-t-red-500 bg-red-500/5 shadow-[0_0_15px_rgba(239,68,68,0.2)]" : "border-t-primary bg-primary/5")}>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm flex items-center justify-between text-muted-foreground uppercase tracking-wide">
+              <span className="flex items-center gap-2">
+                <Activity className="w-4 h-4 text-primary" /> Behavioral Analytics (Live)
+              </span>
+              {t.inputs.anomalous && (
+                <Badge className="bg-red-500 text-white font-bold animate-pulse uppercase tracking-wider">
+                  ⚠️ BOT / SCRIPT DETECTED
+                </Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 gap-4 pb-4">
+            <div className="flex flex-col items-center justify-center p-4 glass rounded bg-black/20">
+              <span className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-2">Typing Speed</span>
+              <div className="flex items-end gap-2">
+                <span className={cn("text-3xl font-bold font-mono", t.inputs.kpm > 600 ? "text-red-400" : "text-emerald-400")}>
+                  {t.inputs.kpm}
+                </span>
+                <span className="text-xs text-muted-foreground mb-1">KPM</span>
+              </div>
+            </div>
+            <div className="flex flex-col items-center justify-center p-4 glass rounded bg-black/20">
+              <span className="text-xs text-muted-foreground font-mono uppercase tracking-widest mb-2">Cursor Activity</span>
+              <div className="flex items-end gap-2">
+                <span className={cn("text-3xl font-bold font-mono", t.inputs.cpm > 8000 ? "text-red-400" : "text-emerald-400")}>
+                  {t.inputs.cpm}
+                </span>
+                <span className="text-xs text-muted-foreground mb-1">CPM</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {detail.remote_threats && detail.remote_threats.length > 0 && (
         <Card className="border-red-500/50 bg-red-500/5 mt-4">
           <CardHeader className="py-3">
