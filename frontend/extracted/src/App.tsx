@@ -32,7 +32,7 @@ export default function App() {
   useEffect(() => {
     const fetchIncidents = async () => {
       try {
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        const API_URL = import.meta.env.VITE_API_URL || 'https://phantomshield-x.onrender.com';
         const res = await fetch(`${API_URL}/incidents`);
         if (!res.ok) return;
         const data = await res.json();

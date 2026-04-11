@@ -82,7 +82,7 @@ export const Overview: React.FC<OverviewProps> = ({ threats, logs, onReset, onOp
   // Use refs to avoid re-triggering the effect
   const prevNetRef = useRef<{sent: number; recv: number; time: number} | null>(null);
 
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  const API_URL = import.meta.env.VITE_API_URL || 'https://phantomshield-x.onrender.com';
 
   const formatBytes = (bytes: number): string => {
     if (bytes < 1024) return `${Math.round(bytes)} B`;

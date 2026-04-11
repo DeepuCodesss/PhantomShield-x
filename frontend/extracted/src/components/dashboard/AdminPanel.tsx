@@ -47,7 +47,7 @@ interface DeviceDetail extends AgentDevice {
   remote_threats?: { name: string; file_path: string; severity: string; description: string }[];
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'https://phantomshield-x.onrender.com';
 
 // ─── Device Card ──────────────────────────────────────────────────────────────
 const DeviceCard: React.FC<{ device: AgentDevice; onClick: () => void }> = ({ device, onClick }) => {

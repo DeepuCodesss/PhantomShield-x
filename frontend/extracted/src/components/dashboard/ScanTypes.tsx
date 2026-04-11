@@ -91,7 +91,7 @@ export const ScanTypes: React.FC = () => {
     setScanResultMode(false);
     setInfectedFiles([]);
     
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const API_URL = import.meta.env.VITE_API_URL || 'https://phantomshield-x.onrender.com';
     const eventSource = new EventSource(`${API_URL}/scan/system/${id}`);
 
     eventSource.onmessage = (event) => {
@@ -332,7 +332,7 @@ export const ScanTypes: React.FC = () => {
                             <button disabled={isDeleting} onClick={async () => {
                               setIsDeleting(true);
                               try {
-                                const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+                                const API_URL = import.meta.env.VITE_API_URL || 'https://phantomshield-x.onrender.com';
                                 await fetch(`${API_URL}/quarantine/files`, {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },
@@ -345,7 +345,7 @@ export const ScanTypes: React.FC = () => {
                             <button disabled={isDeleting} onClick={async () => {
                               setIsDeleting(true);
                               try {
-                                const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+                                const API_URL = import.meta.env.VITE_API_URL || 'https://phantomshield-x.onrender.com';
                                 await fetch(`${API_URL}/delete/files`, {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },
@@ -371,7 +371,7 @@ export const ScanTypes: React.FC = () => {
                                   <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
                                       <button onClick={async () => {
                                         try {
-                                          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+                                          const API_URL = import.meta.env.VITE_API_URL || 'https://phantomshield-x.onrender.com';
                                           await fetch(`${API_URL}/quarantine/files`, {
                                             method: 'POST',
                                             headers: { 'Content-Type': 'application/json' },
@@ -382,7 +382,7 @@ export const ScanTypes: React.FC = () => {
                                       }} className="px-3 py-1.5 flex items-center gap-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded border border-emerald-500/20 transition-all font-mono text-[10px] font-bold whitespace-nowrap" title="Quarantine Payload"><Shield className="w-3 h-3 shrink-0" /> QUARANTINE</button>
                                       <button onClick={async () => {
                                         try {
-                                          const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+                                          const API_URL = import.meta.env.VITE_API_URL || 'https://phantomshield-x.onrender.com';
                                           await fetch(`${API_URL}/delete/files`, {
                                             method: 'POST',
                                             headers: { 'Content-Type': 'application/json' },
