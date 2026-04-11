@@ -295,24 +295,34 @@ async def run_remote_scan(client: httpx.AsyncClient, server: str, device_id: str
     threats = []
     scanned_count = 0
     
-    # Target important directories
+    # Target important directories — but NOT deep into project/node_modules folders
     target_dirs = [
         os.path.join(os.path.expanduser("~"), "Desktop"),
         os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop"),
         os.path.join(os.path.expanduser("~"), "Downloads"),
-        os.path.join(os.path.expanduser("~"), "Documents"),
     ]
     
-    # Full heuristic keyword list — same as active_protection_monitor
-    malicious_keywords = ["virus", "malware", "ransomware", "trojan", "mimikatz", 
-                          "hack", "exploit", "payload", "keylogger", "backdoor"]
+    # Only flag files whose name clearly indicates malware intent (exact pattern matching)
+    # These patterns must appear as the PRIMARY name, not as part of a tool name like "virustotal"
+    malware_filenames = [
+        "ransomware_trigger", "mimikatz_dump", "trojan_payload",
+        "keylogger", "backdoor", "exploit_kit",
+    ]
     
-    # Also flag suspicious extensions in user directories
-    suspicious_extensions = [".exe", ".bat", ".ps1", ".vbs", ".cmd", ".scr"]
+    # Also flag if the ENTIRE filename (without extension) is one of these standalone keywords
+    standalone_keywords = ["malware", "ransomware", "trojan", "mimikatz", 
+                           "exploit", "payload", "keylogger", "backdoor"]
+    
+    # Skip these directories (dev tools, not threats)
+    skip_dirs = {"node_modules", ".git", "__pycache__", "venv", ".venv", "env", 
+                 ".next", "dist", "build", ".cache", ".npm"}
     
     for target in target_dirs:
         if not os.path.exists(target): continue
-        for root, _, files in os.walk(target):
+        for root, dirs, files in os.walk(target):
+            # Skip dev/system directories
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            
             for file in files:
                 scanned_count += 1
                 file_lower = file.lower()
@@ -321,19 +331,20 @@ async def run_remote_scan(client: httpx.AsyncClient, server: str, device_id: str
                 is_threat = False
                 threat_desc = ""
                 
-                # Check for malicious keywords in filename
-                for kw in malicious_keywords:
-                    if kw in file_lower:
+                # Get filename without extension for matching
+                name_no_ext = os.path.splitext(file_lower)[0]
+                
+                # Check 1: Does the filename match a known malware pattern?
+                for pattern in malware_filenames:
+                    if pattern in name_no_ext:
                         is_threat = True
-                        threat_desc = f"Malicious keyword '{kw}' detected in filename during remote scan."
+                        threat_desc = f"Known malware artifact '{pattern}' detected in filename."
                         break
                 
-                # Check for suspicious executables in user folders (Desktop/Downloads only)
-                if not is_threat and any(file_lower.endswith(ext) for ext in suspicious_extensions):
-                    # Only flag .exe etc in Desktop/Downloads, not system dirs
-                    if "Desktop" in root or "Downloads" in root:
-                        is_threat = True
-                        threat_desc = f"Suspicious executable found in user directory: {file}"
+                # Check 2: Is the entire filename (without ext) a standalone malware keyword?
+                if not is_threat and name_no_ext in standalone_keywords:
+                    is_threat = True
+                    threat_desc = f"File named '{file}' matches known malware signature."
                 
                 if is_threat:
                     threats.append({
