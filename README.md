@@ -310,7 +310,6 @@ PhantomShield X is pre-configured for multiple cloud platforms:
   <tr>
     <td align="center">
       <a href="https://github.com/DeepuCodesss">
-        <img src="https://github.com/DeepuCodesss.png" width="80" style="border-radius:50%"/><br/>
         <b>@DeepuCodesss</b>
       </a>
     </td>
@@ -330,8 +329,8 @@ PhantomShield X is pre-configured for multiple cloud platforms:
   </tr>
   <tr>
     <td align="center">
-      <b>href=https://github.com/mayank7720</b><br/>
-      <i>mayank7720</i>
+      <b>https://github.com/mayank7720</b><br/>
+      <i>@mayank7720</i>
     </td>
     <td align="center">
       <img src="https://img.shields.io/badge/Frontend_Lead-3178C6?style=flat-square" alt="Frontend"/><br/>
@@ -349,8 +348,8 @@ PhantomShield X is pre-configured for multiple cloud platforms:
   </tr>
   <tr>
     <td align="center">
-      <b>href=https://github.com/adityasharma2408</b><br/>
-      <i>adityasharma2408</i>
+      <b>https://github.com/adityasharma2408</b><br/>
+      <i>@adityasharma2408</i>
     </td>
     <td align="center">
       <img src="https://img.shields.io/badge/Security_Engineer-EE0000?style=flat-square" alt="Security"/><br/>
@@ -368,7 +367,7 @@ PhantomShield X is pre-configured for multiple cloud platforms:
   </tr>
   <tr>
     <td align="center">
-      <b>href=https://github.com/</b><br/>
+      <b>https://github.com/</b><br/>
       <i>harshitshukla</i>
     </td>
     <td align="center">
@@ -387,11 +386,7 @@ PhantomShield X is pre-configured for multiple cloud platforms:
     </td>
   </tr>
   <tr>
-    <td align="center">
-      <b>Contributor 5</b><br/>
-      <i>(Open Position)</i>
-    </td>
-    <br/>
+  <br/>
 
 ## 🛠️ Tech Stack
 
