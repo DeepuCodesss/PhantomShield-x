@@ -330,8 +330,8 @@ PhantomShield X is pre-configured for multiple cloud platforms:
   </tr>
   <tr>
     <td align="center">
-      <b>@mayank7720</b><br/>
-      <i>(Open Position)</i>
+      <b>href=https://github.com/mayank7720</b><br/>
+      <i>mayank7720</i>
     </td>
     <td align="center">
       <img src="https://img.shields.io/badge/Frontend_Lead-3178C6?style=flat-square" alt="Frontend"/><br/>
@@ -349,8 +349,8 @@ PhantomShield X is pre-configured for multiple cloud platforms:
   </tr>
   <tr>
     <td align="center">
-      <b>Contributor 3</b><br/>
-      <i>(Open Position)</i>
+      <b>href=https://github.com/adityasharma2408</b><br/>
+      <i>adityasharma2408</i>
     </td>
     <td align="center">
       <img src="https://img.shields.io/badge/Security_Engineer-EE0000?style=flat-square" alt="Security"/><br/>
@@ -368,8 +368,8 @@ PhantomShield X is pre-configured for multiple cloud platforms:
   </tr>
   <tr>
     <td align="center">
-      <b>Contributor 4</b><br/>
-      <i>(Open Position)</i>
+      <b>href=https://github.com/</b><br/>
+      <i>harshitshukla</i>
     </td>
     <td align="center">
       <img src="https://img.shields.io/badge/Agent_Developer-009688?style=flat-square" alt="Agent"/><br/>
@@ -391,24 +391,7 @@ PhantomShield X is pre-configured for multiple cloud platforms:
       <b>Contributor 5</b><br/>
       <i>(Open Position)</i>
     </td>
-    <td align="center">
-      <img src="https://img.shields.io/badge/Extension_Dev-4285F4?style=flat-square" alt="Extension"/><br/>
-      <img src="https://img.shields.io/badge/DevOps-2496ED?style=flat-square" alt="DevOps"/>
-    </td>
-    <td>
-      <b>Chrome Extension & DevOps</b><br/>
-      • Chrome extension (Manifest V3) (<code>chrome-extension/</code>)<br/>
-      • Real-time URL interception & scanning<br/>
-      • Warning page UI for blocked threats<br/>
-      • CI/CD pipeline setup (GitHub Actions)<br/>
-      • Docker containerization<br/>
-      • Splunk SIEM integration & log forwarding<br/>
-      • Documentation & test suites
-    </td>
-  </tr>
-</table>
-
-<br/>
+    <br/>
 
 ## 🛠️ Tech Stack
 
