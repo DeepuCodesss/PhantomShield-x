@@ -330,7 +330,7 @@ PhantomShield X is pre-configured for multiple cloud platforms:
   </tr>
   <tr>
     <td align="center">
-      <b>Contributor 2</b><br/>
+      <b>@mayank7720</b><br/>
       <i>(Open Position)</i>
     </td>
     <td align="center">
